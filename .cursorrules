@@ -1,0 +1,364 @@
+# School Management Platform - Cursor AI Rules
+
+## Project Overview
+Multi-tenant School Management SaaS platform (MVP)
+
+## Tech Stack
+- Backend: Python 3.11 + FastAPI + SQLAlchemy 2.0 + PostgreSQL 15
+- Frontend: React 18 + TypeScript + Vite + Tailwind CSS
+- Database: PostgreSQL 15
+- ORM: SQLAlchemy 2.0 (async)
+- Migrations: Alembic
+
+## Documentation Location
+ALL specifications are in docs/ folder:
+- docs/00-master-spec.md - System requirements and rules
+- docs/01-api-spec.md - Complete API specification
+- docs/02-data-model.md - Database schema
+- docs/03-state-machines.md - State transitions
+
+## CRITICAL RULES (NEVER VIOLATE)
+
+## UI / DESIGN SYSTEM RULES (CRITICAL – NEVER VIOLATE)
+
+### Design Authority
+1. **ALL frontend UI MUST follow the “Enterprise Dashboard – Masanabby” design style**
+2. This design style is NON-NEGOTIABLE and MUST be applied consistently across ALL pages
+3. No page, component, or layout may introduce new visual patterns
+
+---
+
+### Layout Rules (MANDATORY)
+1. ALL pages MUST be wrapped in a shared `AppLayout` component
+2. `AppLayout` MUST include:
+   - Persistent left sidebar navigation
+   - Light gray application background
+   - Scrollable main content area
+3. Pages MUST NOT implement their own layout logic
+
+❌ Forbidden:
+- Full-width pages
+- Centered-only layouts
+- Page-specific navigation
+- Custom containers
+
+---
+
+### Page Structure Rules
+1. EVERY page MUST contain a `PageHeader` component at the top
+2. `PageHeader` MUST support:
+   - Page title (required)
+   - Subtitle/context text (optional)
+   - Primary action button (top-right, optional)
+3. Page content MUST start immediately after the header
+
+---
+
+### Card-Based UI (STRICT)
+1. ALL content MUST be inside cards
+2. Allowed card components ONLY:
+   - `StatCard` (metrics, KPIs)
+   - `ContentCard` (tables, forms, lists)
+3. Cards MUST have:
+   - White background
+   - Rounded corners (8–12px)
+   - Soft shadow
+4. Cards MUST be spaced evenly using the global spacing system
+
+❌ Forbidden:
+- Raw div-based layouts
+- Border-heavy designs
+- Edge-to-edge content
+- Custom card styles
+
+---
+
+### Color Rules (SEMANTIC ONLY)
+Allowed colors:
+- Primary Blue → navigation, primary actions
+- Green → positive states (paid, completed, success)
+- Red → negative states (pending, overdue, errors)
+- Neutral Gray → backgrounds, secondary text
+
+❌ Forbidden:
+- Arbitrary colors
+- Inline color styles
+- Decorative colors
+- Custom gradients
+
+---
+
+### Typography Rules
+1. Font family MUST be:
+   - `Inter`, fallback to system sans-serif
+2. Typography hierarchy:
+   - Page title: large, bold
+   - Card title: medium weight
+   - Body text: regular
+   - Supporting text: muted gray
+3. Numeric values (money, totals) MUST be visually emphasized
+
+---
+
+### Icons
+1. Icons are SUPPORTING elements only
+2. Icons MUST NOT be the primary information carrier
+3. Icon sizes MUST be consistent across the app
+
+❌ Forbidden:
+- Icon-only buttons without labels
+- Mixed icon styles
+- Oversized icons
+
+---
+
+### Styling Rules (ABSOLUTE)
+1. ❌ NO inline styles
+2. ❌ NO custom CSS per page
+3. ❌ NO arbitrary Tailwind classes
+4. ✅ ONLY approved Tailwind utility classes and shared components
+
+If a required UI cannot be built using existing components:
+→ STOP and ask for clarification before proceeding.
+
+---
+
+### Frontend Code Rules (UI)
+- Reuse existing layout and components ALWAYS
+- NEVER create page-specific visual logic
+- NEVER redesign an existing page
+- UI consistency > feature speed
+
+Any deviation is considered a breaking rule violation.
+
+### Tailwind & Styling Rules (CRITICAL)
+
+1. ALL colors MUST use semantic Tailwind tokens
+   - bg-background
+   - text-foreground
+   - bg-card
+   - text-muted-foreground
+   - bg-primary
+   - text-primary-foreground
+
+2. ❌ NEVER use:
+   - bg-blue-*
+   - text-red-*
+   - bg-gray-*
+   - hex colors
+   - inline styles
+
+3. Border radius MUST use:
+   - rounded-lg
+   - rounded-md
+   - rounded-sm
+
+4. Shadows MUST be consistent with cards only
+5. Spacing MUST use Tailwind spacing scale (no arbitrary values)
+
+
+### Security & Data Isolation
+1. **TENANT ISOLATION IS MANDATORY**: Every database query MUST filter by school_id
+```python
+   # CORRECT:
+   student = db.query(Student).filter(
+       Student.id == student_id,
+       Student.school_id == current_user.school_id  # ALWAYS!
+   ).first()
+   
+   # WRONG (Security violation):
+   student = db.query(Student).filter(Student.id == student_id).first()
+```
+
+2. **ALWAYS validate input server-side** with Pydantic schemas
+3. **ALWAYS use parameterized queries** (never string interpolation)
+4. **ALWAYS check permissions** before data access
+5. **Phone numbers MUST start with +254** (Kenya format)
+6. **Phone and email are unique per school** (not globally unique)
+
+### Code Standards
+
+#### Python
+- Use **async/await** for all database operations
+- Use **type hints** for all functions
+- Follow **PEP 8**
+- Use **Pydantic** for validation
+- Structure:
+```python
+  from typing import Optional
+  from uuid import UUID
+  from sqlalchemy.ext.asyncio import AsyncSession
+  
+  async def get_student(
+      db: AsyncSession,
+      student_id: UUID,
+      school_id: UUID
+  ) -> Optional[Student]:
+      """Get student by ID with tenant isolation."""
+      pass
+```
+
+#### TypeScript/React
+- Use **functional components only**
+- Use **TypeScript strict mode**
+- Prefer **const** over let
+- Use **async/await** over .then()
+- Example:
+```typescript
+  const StudentList: React.FC = () => {
+    const [students, setStudents] = useState<Student[]>([]);
+    // ...
+  };
+```
+
+### API Development
+- **ALWAYS reference docs/01-api-spec.md** before creating endpoints
+- Follow **EXACT request/response formats** from spec
+- Include **ALL error cases** from spec
+- Return proper **HTTP status codes**
+- Example endpoint structure:
+```python
+  @router.post("/students", response_model=StudentResponse, status_code=201)
+  async def create_student(
+      student: StudentCreate,
+      db: AsyncSession = Depends(get_db),
+      current_user: User = Depends(get_current_user)
+  ):
+      # 1. Validate permissions
+      # 2. Enforce tenant isolation
+      # 3. Validate business rules
+      # 4. Create student
+      # 5. Return response
+      pass
+```
+
+### Database Models
+- Use **UUID** for all primary keys
+- Include **created_at** and **updated_at** timestamps
+- Add **indexes** as specified in data model spec
+- Add **foreign key constraints**
+- Example:
+```python
+  class Student(Base):
+      __tablename__ = "students"
+      
+      id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+      school_id: Mapped[UUID] = mapped_column(ForeignKey("schools.id"), index=True)
+      # ... other fields
+      created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+```
+
+### Error Handling
+- Use standard error format from spec:
+```python
+  {
+      "error_code": "ERROR_CODE",
+      "message": "Human readable message",
+      "recovery": "What to do next",
+      "details": {}  # optional
+  }
+```
+
+### Testing
+- Write **tests for all endpoints**
+- Test **permission boundaries**
+- Test **tenant isolation**
+- Minimum **80% code coverage**
+- Use **pytest fixtures**
+
+## File Locations
+- Models: `backend/app/models/`
+- Schemas: `backend/app/schemas/`
+- Endpoints: `backend/app/api/v1/endpoints/`
+- Services: `backend/app/services/`
+- Core utilities: `backend/app/core/`
+- Tests: `backend/tests/`
+
+## What NOT to Do
+- ❌ Never skip tenant isolation check
+- ❌ Never skip input validation
+- ❌ Never use string interpolation in SQL
+- ❌ Never hardcode credentials
+- ❌ Never return internal errors to client
+- ❌ Never skip permission checks
+- ❌ Never use blocking I/O in async functions
+- ❌ Never create global state variables
+- ❌ Never delete records (soft delete only)
+
+## Development Workflow
+1. Read relevant spec section FIRST
+2. Create/update models if needed
+3. Create Pydantic schemas
+4. Implement endpoint with ALL error cases
+5. Write tests
+6. Test manually
+7. Commit with clear message
+
+## When You Generate Code
+- Include ALL imports
+- Include ALL error handling
+- Include docstrings
+- Include type hints
+- Make it production-ready (no TODOs/placeholders)
+- Follow the exact spec requirements
+
+## Questions to Ask Before Coding
+1. Which spec section covers this?
+2. What are the permission rules?
+3. How do I enforce tenant isolation?
+4. What error cases must I handle?
+5. Are there any state machine rules?
+```
+
+**Save the file.**
+
+---
+
+## 🐍 Phase 3: Backend Setup with Cursor
+
+### **Step 1: Create Backend Dependencies**
+
+**In Cursor Chat (Ctrl+L):**
+```
+Create backend/requirements.txt with all dependencies for a FastAPI + SQLAlchemy 2.0 + PostgreSQL project.
+
+Include:
+- FastAPI 0.104+
+- Uvicorn with standard
+- SQLAlchemy 2.0+ (with asyncio support)
+- Alembic
+- Pydantic 2.0+
+- python-jose for JWT
+- passlib with bcrypt
+- python-multipart
+- boto3 (AWS S3)
+- celery + redis
+- pytest + pytest-asyncio
+- httpx (for testing)
+- python-dotenv
+- phonenumbers (for phone validation)
+- email-validator
+- psycopg2-binary (PostgreSQL driver)
+
+Use specific versions that are compatible with each other.
+```
+
+Cursor will create a complete `requirements.txt`.
+
+---
+
+### **Step 2: Create Environment Configuration**
+
+**In Cursor Chat:**
+```
+Create backend/.env.example with all environment variables needed for the project.
+
+Include:
+- Database URL (PostgreSQL)
+- JWT settings (secret key, algorithm, expiry)
+- AWS S3 settings (for later)
+- SMS provider settings (Africa's Talking - for later)
+- Email settings (SendGrid - for later)
+- Environment (development/production)
+
+Add comments explaining each variable.
