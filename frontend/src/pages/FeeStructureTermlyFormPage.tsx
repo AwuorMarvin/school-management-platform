@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { feeStructuresApi, FeeStructureTermlyCreate, FeeLineItemCreate } from '../api/feeStructures'
+import { feeStructuresApi, FeeStructureTermlyCreate, FeeStructure, FeeStructureConflictResponse } from '../api/feeStructures'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
 import { termsApi, Term } from '../api/terms'
 import { classesApi, Class } from '../api/classes'
@@ -21,7 +21,8 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
-  CalendarDays
+  CalendarDays,
+  X
 } from 'lucide-react'
 
 interface LineItem {
@@ -34,17 +35,24 @@ interface LineItem {
 
 const FeeStructureTermlyFormPage = () => {
   const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
+  const isEdit = !!id
   const { user } = useAuthStore()
-  const { showToast } = useToastStore()
+  const successToast = useToastStore((state) => state.success)
+  const errorToast = useToastStore((state) => state.error)
   
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
+  const [loadingStructure, setLoadingStructure] = useState(false)
   const [error, setError] = useState('')
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([])
   const [terms, setTerms] = useState<Term[]>([])
   const [classes, setClasses] = useState<Class[]>([])
   const [campuses, setCampuses] = useState<Campus[]>([])
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([])
+  const [originalStructure, setOriginalStructure] = useState<FeeStructure | null>(null)
+  const [conflictData, setConflictData] = useState<FeeStructureConflictResponse | null>(null)
+  const [showConflictModal, setShowConflictModal] = useState(false)
   
   const [formData, setFormData] = useState({
     structure_name: '',
@@ -58,13 +66,17 @@ const FeeStructureTermlyFormPage = () => {
 
   useEffect(() => {
     loadInitialData()
-    // Add initial line item
-    setFormData(prev => ({
-      ...prev,
-      line_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
-      campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
-    }))
-  }, [isCampusAdmin, user?.campus_id])
+    if (isEdit && id) {
+      loadFeeStructure()
+    } else {
+      // Add initial line item for new structure
+      setFormData(prev => ({
+        ...prev,
+        line_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
+        campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
+      }))
+    }
+  }, [isEdit, id, isCampusAdmin, user?.campus_id])
 
   useEffect(() => {
     if (formData.academic_year_id) {
@@ -94,7 +106,7 @@ const FeeStructureTermlyFormPage = () => {
       setCampuses(campusesResponse.data)
     } catch (err: any) {
       console.error('Failed to load initial data:', err)
-      showToast('Failed to load initial data', 'error')
+      errorToast('Failed to load initial data')
     } finally {
       setLoadingData(false)
     }
@@ -123,6 +135,78 @@ const FeeStructureTermlyFormPage = () => {
     }
   }
 
+  const loadFeeStructure = async () => {
+    if (!id) return
+    
+    try {
+      setLoadingStructure(true)
+      const structure = await feeStructuresApi.get(id)
+      
+      // Verify it's a TERM-scoped structure
+      if (structure.structure_scope !== 'TERM') {
+        errorToast('This fee structure is not termly. Redirecting...')
+        navigate('/fee-structures')
+        return
+      }
+      
+      setOriginalStructure(structure)
+      
+      // Prepopulate form data
+      setFormData({
+        structure_name: structure.structure_name,
+        campus_id: structure.campus_id,
+        academic_year_id: structure.academic_year_id,
+        term_id: structure.term_id || '',
+        line_items: structure.line_items.map(item => ({
+          item_name: item.item_name,
+          amount: String(item.amount),
+          display_order: item.display_order,
+          is_annual: item.is_annual || false,
+          is_one_off: item.is_one_off || false,
+        })),
+      })
+      
+      // Set selected class IDs
+      if (structure.class_ids && structure.class_ids.length > 0) {
+        setSelectedClassIds(structure.class_ids)
+      } else if (structure.class_id) {
+        // Legacy support
+        setSelectedClassIds([structure.class_id])
+      }
+      
+      // Load terms for the academic year (use structure values directly)
+      if (structure.academic_year_id) {
+        try {
+          const termsResponse = await termsApi.list({ academic_year_id: structure.academic_year_id })
+          setTerms(termsResponse.data)
+        } catch (err: any) {
+          console.error('Failed to load terms:', err)
+        }
+      }
+      
+      // Load classes for the campus and academic year (use structure values directly)
+      if (structure.campus_id && structure.academic_year_id) {
+        try {
+          const classesResponse = await classesApi.list({
+            campus_id: structure.campus_id,
+            academic_year_id: structure.academic_year_id,
+            page: 1,
+            page_size: 100,
+          })
+          setClasses(classesResponse.data)
+        } catch (err: any) {
+          console.error('Failed to load classes:', err)
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to load fee structure:', err)
+      setError(err.response?.data?.message || 'Failed to load fee structure')
+      errorToast('Failed to load fee structure')
+    } finally {
+      setLoadingStructure(false)
+    }
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
@@ -134,7 +218,7 @@ const FeeStructureTermlyFormPage = () => {
         return prev.filter(id => id !== classId)
       } else {
         if (prev.length >= 10) {
-          showToast('Maximum 10 classes allowed', 'error')
+          errorToast('Maximum 10 classes allowed')
           return prev
         }
         return [...prev, classId]
@@ -159,7 +243,7 @@ const FeeStructureTermlyFormPage = () => {
 
   const addLineItem = () => {
     if (formData.line_items.length >= 10) {
-      showToast('Maximum 10 line items allowed', 'error')
+      errorToast('Maximum 10 line items allowed')
       return
     }
     setFormData(prev => ({
@@ -343,6 +427,7 @@ const FeeStructureTermlyFormPage = () => {
         academic_year_id: formData.academic_year_id,
         term_id: formData.term_id,
         class_ids: selectedClassIds,
+        override_conflicts: isEdit ? true : false, // In edit mode, always override (creating new version)
         line_items: formData.line_items.map((item, index) => ({
           item_name: item.item_name,
           amount: item.amount,
@@ -352,13 +437,31 @@ const FeeStructureTermlyFormPage = () => {
         })),
       }
 
-      await feeStructuresApi.createTermly(payload)
-      showToast('Fee structure created successfully', 'success')
+      const result = await feeStructuresApi.createTermly(payload)
+      
+      // Success - result is a FeeStructure
+      if (isEdit) {
+        successToast('New version of fee structure created successfully')
+      } else {
+        successToast('Fee structure created successfully')
+      }
       navigate('/fee-structures')
     } catch (err: any) {
-      const message = err.response?.data?.message || 'Failed to create fee structure'
+      // Handle 409 Conflict response
+      if (err.response?.status === 409 && err.response?.data?.has_conflicts) {
+        const conflictResponse: FeeStructureConflictResponse = {
+          has_conflicts: true,
+          conflicts: err.response.data.conflicts || [],
+          message: err.response.data.message || 'Conflicts detected',
+        }
+        setConflictData(conflictResponse)
+        setShowConflictModal(true)
+        return
+      }
+      
+      const message = err.response?.data?.message || (isEdit ? 'Failed to create new version' : 'Failed to create fee structure')
       setError(message)
-      showToast(message, 'error')
+      errorToast(message)
     } finally {
       setLoading(false)
     }
@@ -367,12 +470,28 @@ const FeeStructureTermlyFormPage = () => {
   return (
     <AppLayout>
       <PageHeader
-        title="Create Termly Fee Structure"
-        subtitle="Define fees for a specific term"
+        title={isEdit ? 'Edit Termly Fee Structure' : 'Create Termly Fee Structure'}
+        subtitle={isEdit ? 'Create a new version of this fee structure' : 'Define fees for a specific term'}
         action={<BackButton to="/fee-structures" />}
       />
 
       <div className="p-8">
+        {loadingStructure && (
+          <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+            <p className="text-sm text-blue-800">Loading fee structure...</p>
+          </div>
+        )}
+        
+        {isEdit && originalStructure && (
+          <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg">
+            <p className="text-sm font-medium text-yellow-800">Creating New Version</p>
+            <p className="text-sm text-yellow-700 mt-1">
+              You are creating a new version of this fee structure. Context fields (Campus, Academic Year, Term, Classes) cannot be changed.
+              {originalStructure.status === 'ACTIVE' && ' The original structure will remain active until you activate this new version.'}
+            </p>
+          </div>
+        )}
+        
         {error && (
           <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -412,7 +531,7 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.campus_id}
                   onChange={handleChange}
                   required
-                  disabled={isCampusAdmin}
+                  disabled={isCampusAdmin || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Campus</option>
@@ -433,7 +552,8 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.academic_year_id}
                   onChange={handleChange}
                   required
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  disabled={isEdit}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Academic Year</option>
                   {academicYears.map(year => (
@@ -453,7 +573,7 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.term_id}
                   onChange={handleChange}
                   required
-                  disabled={!formData.academic_year_id}
+                  disabled={!formData.academic_year_id || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Term</option>
@@ -488,12 +608,13 @@ const FeeStructureTermlyFormPage = () => {
             ) : (
               <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
                 {classes.map(cls => (
-                  <label key={cls.id} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1.5 rounded">
+                  <label key={cls.id} className={`flex items-center gap-2 ${isEdit ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-white'} p-1.5 rounded`}>
                     <input
                       type="checkbox"
                       checked={selectedClassIds.includes(cls.id)}
                       onChange={() => handleClassToggle(cls.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      disabled={isEdit}
+                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed"
                     />
                     <span className="text-xs text-gray-700">{cls.name}</span>
                   </label>
@@ -535,20 +656,103 @@ const FeeStructureTermlyFormPage = () => {
             </button>
             <button
               type="submit"
-              disabled={loading || loadingData}
+              disabled={loading || loadingData || loadingStructure}
               className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
             >
               {loading ? (
-                <>Creating...</>
+                <>{isEdit ? 'Creating New Version...' : 'Creating...'}</>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  Create Fee Structure
+                  {isEdit ? 'Create New Version' : 'Create Fee Structure'}
                 </>
               )}
             </button>
           </div>
         </form>
+
+        {/* Conflict Modal */}
+        {showConflictModal && conflictData && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-yellow-600" />
+                  <h2 className="text-lg font-semibold text-gray-900">Conflict Detection</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowConflictModal(false)}
+                  className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-6 py-4">
+                <p className="text-sm text-gray-700 mb-4">{conflictData.message}</p>
+                <div className="space-y-3 mb-6">
+                  {conflictData.conflicts.map((conflict, idx) => (
+                    <div key={idx} className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg">
+                      <p className="text-sm font-medium text-gray-900">{conflict.class_name}</p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        Existing term structures: {conflict.existing_term_names.join(', ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowConflictModal(false)
+                    navigate('/fee-structures')
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowConflictModal(false)
+                    // Retry with override_conflicts = true
+                    try {
+                      setLoading(true)
+                      const payload: FeeStructureTermlyCreate = {
+                        structure_name: formData.structure_name,
+                        campus_id: formData.campus_id,
+                        academic_year_id: formData.academic_year_id,
+                        term_id: formData.term_id,
+                        class_ids: selectedClassIds,
+                        override_conflicts: true,
+                        line_items: formData.line_items.map((item, index) => ({
+                          item_name: item.item_name,
+                          amount: item.amount,
+                          display_order: index,
+                          is_annual: item.is_annual,
+                          is_one_off: item.is_one_off,
+                        })),
+                      }
+                      await feeStructuresApi.createTermly(payload)
+                      successToast('Fee structure created successfully')
+                      navigate('/fee-structures')
+                    } catch (err: any) {
+                      const message = err.response?.data?.message || 'Failed to create fee structure'
+                      setError(message)
+                      errorToast(message)
+                    } finally {
+                      setLoading(false)
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                >
+                  Override
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppLayout>
   )

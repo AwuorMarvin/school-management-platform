@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
@@ -7,6 +7,7 @@ import BackButton from '../components/BackButton'
 import { 
   feeStructuresApi, 
   FeeStructureAnnualCreate, 
+  FeeStructure,
   FeeLineItemCreate,
   FeeStructureConflictResponse 
 } from '../api/feeStructures'
@@ -40,12 +41,15 @@ interface LineItem {
 
 const FeeStructureAnnualFormPage = () => {
   const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
+  const isEdit = !!id
   const { user } = useAuthStore()
   const successToast = useToastStore((state) => state.success)
   const errorToast = useToastStore((state) => state.error)
   
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
+  const [loadingStructure, setLoadingStructure] = useState(false)
   const [checkingConflicts, setCheckingConflicts] = useState(false)
   const [error, setError] = useState('')
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([])
@@ -56,6 +60,7 @@ const FeeStructureAnnualFormPage = () => {
   const [conflictData, setConflictData] = useState<FeeStructureConflictResponse | null>(null)
   const [showConflictModal, setShowConflictModal] = useState(false)
   const [mergeStrategy, setMergeStrategy] = useState<'MERGE' | 'OVERRIDE' | null>(null)
+  const [originalStructure, setOriginalStructure] = useState<FeeStructure | null>(null)
   
   const [formData, setFormData] = useState({
     structure_name: '',
@@ -76,16 +81,20 @@ const FeeStructureAnnualFormPage = () => {
     let isMounted = true
     
     const initialize = async () => {
-      // Add initial line items
-      setFormData(prev => ({
-        ...prev,
-        term_1_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
-        term_2_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
-        term_3_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
-        annual_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: true, is_one_off: false }],
-        one_off_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: true }],
-        campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
-      }))
+      if (isEdit && id) {
+        await loadFeeStructure()
+      } else {
+        // Add initial line items for new structure
+        setFormData(prev => ({
+          ...prev,
+          term_1_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
+          term_2_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
+          term_3_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
+          annual_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: true, is_one_off: false }],
+          one_off_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: true }],
+          campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
+        }))
+      }
       
       // Load data only if component is still mounted
       if (isMounted) {
@@ -98,7 +107,7 @@ const FeeStructureAnnualFormPage = () => {
     return () => {
       isMounted = false
     }
-  }, [isCampusAdmin, user?.campus_id])
+  }, [isEdit, id, isCampusAdmin, user?.campus_id])
 
   useEffect(() => {
     if (formData.academic_year_id) {
@@ -216,6 +225,152 @@ const FeeStructureAnnualFormPage = () => {
     }
   }
 
+  const loadFeeStructure = async () => {
+    if (!id) return
+    
+    try {
+      setLoadingStructure(true)
+      const structure = await feeStructuresApi.get(id)
+      
+      // Get all related structures (same campus, academic year, and classes)
+      // This is needed because annual fee structures create multiple structures (one per term + one for annual/one-off)
+      const allStructures = await feeStructuresApi.list({
+        campus_id: structure.campus_id,
+        academic_year_id: structure.academic_year_id,
+        page_size: 100 // Get all related structures
+      })
+      
+      // Filter to structures with the same classes
+      const structureClassIds = structure.class_ids || (structure.class_id ? [structure.class_id] : [])
+      const relatedStructures = allStructures.data.filter(s => {
+        const sClassIds = s.class_ids || (s.class_id ? [s.class_id] : [])
+        return sClassIds.length === structureClassIds.length && 
+               sClassIds.every(id => structureClassIds.includes(id))
+      })
+      
+      // Use the first structure for basic info (campus, academic year, classes)
+      const primaryStructure = structure
+      
+      setOriginalStructure(primaryStructure)
+      
+      // Prepopulate form data
+      setFormData(prev => ({
+        ...prev,
+        structure_name: primaryStructure.structure_name || '',
+        campus_id: primaryStructure.campus_id,
+        academic_year_id: primaryStructure.academic_year_id,
+      }))
+      
+      // Set selected class IDs
+      if (primaryStructure.class_ids && primaryStructure.class_ids.length > 0) {
+        setSelectedClassIds(primaryStructure.class_ids)
+      } else if (primaryStructure.class_id) {
+        // Legacy support
+        setSelectedClassIds([primaryStructure.class_id])
+      }
+      
+      // Organize line items by category
+      const term1Items: LineItem[] = []
+      const term2Items: LineItem[] = []
+      const term3Items: LineItem[] = []
+      const annualItems: LineItem[] = []
+      const oneOffItems: LineItem[] = []
+      
+      // Load terms to identify term order
+      if (primaryStructure.academic_year_id) {
+        const termsResponse = await termsApi.list({ academic_year_id: primaryStructure.academic_year_id })
+        const sortedTerms = termsResponse.data.sort((a, b) => 
+          new Date(a.start_date).getTime() - new Date(b.start_date).getTime()
+        )
+        setTerms(sortedTerms)
+        
+        const term1Id = sortedTerms[0]?.id
+        const term2Id = sortedTerms[1]?.id
+        const term3Id = sortedTerms[2]?.id
+        
+        // Process all related structures
+        relatedStructures.forEach(s => {
+          s.line_items?.forEach(item => {
+            const lineItem: LineItem = {
+              item_name: item.item_name,
+              amount: String(item.amount),
+              display_order: item.display_order,
+              is_annual: item.is_annual || false,
+              is_one_off: item.is_one_off || false,
+            }
+            
+            if (item.is_one_off) {
+              oneOffItems.push(lineItem)
+            } else if (item.is_annual) {
+              annualItems.push(lineItem)
+            } else {
+              // Regular term items - organize by term_id
+              if (s.term_id === term1Id) {
+                term1Items.push(lineItem)
+              } else if (s.term_id === term2Id) {
+                term2Items.push(lineItem)
+              } else if (s.term_id === term3Id) {
+                term3Items.push(lineItem)
+              } else if (!s.term_id && s.structure_scope === 'YEAR') {
+                // YEAR-scoped structure without term_id - these should only have annual/one-off
+                // But if there are regular items, put them in term 1 as fallback
+                term1Items.push(lineItem)
+              }
+            }
+          })
+        })
+      } else {
+        // Fallback: organize by flags only
+        relatedStructures.forEach(s => {
+          s.line_items?.forEach(item => {
+            const lineItem: LineItem = {
+              item_name: item.item_name,
+              amount: String(item.amount),
+              display_order: item.display_order,
+              is_annual: item.is_annual || false,
+              is_one_off: item.is_one_off || false,
+            }
+            
+            if (item.is_one_off) {
+              oneOffItems.push(lineItem)
+            } else if (item.is_annual) {
+              annualItems.push(lineItem)
+            } else {
+              term1Items.push(lineItem)
+            }
+          })
+        })
+      }
+      
+      // Ensure at least one item in each array (for UI)
+      if (term1Items.length === 0) term1Items.push({ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false })
+      if (term2Items.length === 0) term2Items.push({ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false })
+      if (term3Items.length === 0) term3Items.push({ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false })
+      if (annualItems.length === 0) annualItems.push({ item_name: '', amount: '0.00', display_order: 0, is_annual: true, is_one_off: false })
+      if (oneOffItems.length === 0) oneOffItems.push({ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: true })
+      
+      setFormData(prev => ({
+        ...prev,
+        term_1_items: term1Items,
+        term_2_items: term2Items,
+        term_3_items: term3Items,
+        annual_items: annualItems,
+        one_off_items: oneOffItems,
+      }))
+      
+      // Load classes for the campus and academic year
+      if (primaryStructure.campus_id && primaryStructure.academic_year_id) {
+        await loadClasses()
+      }
+    } catch (err: any) {
+      console.error('Failed to load fee structure:', err)
+      setError(err.response?.data?.message || 'Failed to load fee structure')
+      errorToast('Failed to load fee structure')
+    } finally {
+      setLoadingStructure(false)
+    }
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
@@ -289,38 +444,17 @@ const FeeStructureAnnualFormPage = () => {
   }
 
   const checkConflicts = async () => {
-    if (!formData.campus_id || !formData.academic_year_id || selectedClassIds.length === 0) {
-      setError('Please select campus, academic year, and at least one class')
+    // Skip conflict checking in edit mode - we're creating a new version
+    if (isEdit) {
+      handleCreate(false)
       return
     }
 
-    try {
-      setCheckingConflicts(true)
-      const response = await feeStructuresApi.checkAnnualConflicts({
-        campus_id: formData.campus_id,
-        academic_year_id: formData.academic_year_id,
-        class_ids: selectedClassIds,
-      })
-      setConflictData(response)
-      if (response.has_conflicts) {
-        setShowConflictModal(true)
-        // Reset merge strategy when showing modal
-        setMergeStrategy(null)
-      } else {
-        // No conflicts, set default strategy and proceed to create
-        setMergeStrategy('MERGE')
-        handleCreate()
-      }
-    } catch (err: any) {
-      const message = err.response?.data?.message || 'Failed to check conflicts'
-      setError(message)
-      errorToast(message)
-    } finally {
-      setCheckingConflicts(false)
-    }
+    // Call create directly - it will return conflict info if conflicts exist
+    handleCreate(false)
   }
 
-  const handleCreate = async () => {
+  const handleCreate = async (overrideConflicts: boolean = false) => {
     setError('')
 
     // Validation
@@ -375,10 +509,6 @@ const FeeStructureAnnualFormPage = () => {
       }
     }
 
-    if (conflictData?.has_conflicts && !mergeStrategy) {
-      setError('Please select a conflict resolution strategy')
-      return
-    }
 
     try {
       setLoading(true)
@@ -432,7 +562,7 @@ const FeeStructureAnnualFormPage = () => {
         campus_id: formData.campus_id,
         academic_year_id: formData.academic_year_id,
         class_ids: selectedClassIds,
-        conflict_resolution: mergeStrategy || 'MERGE',
+        override_conflicts: overrideConflicts,
         term_1_items: term1Items.length > 0 ? term1Items : undefined,
         term_2_items: term2Items.length > 0 ? term2Items : undefined,
         term_3_items: term3Items.length > 0 ? term3Items : undefined,
@@ -443,10 +573,31 @@ const FeeStructureAnnualFormPage = () => {
       // Debug: Log payload before sending
       console.log('Sending payload:', JSON.stringify(payload, null, 2))
 
-      await feeStructuresApi.createAnnual(payload)
-      successToast('Annual fee structure created successfully')
+      if (isEdit) {
+        // Create a new version - the backend should handle versioning
+        await feeStructuresApi.createAnnual(payload)
+        successToast('New version of annual fee structure created successfully')
+      } else {
+        await feeStructuresApi.createAnnual(payload)
+        successToast('Annual fee structure created successfully')
+      }
       navigate('/fee-structures')
     } catch (err: any) {
+      // Handle conflict response (409)
+      if (err.response?.status === 409 && err.response?.data?.detail) {
+        const errorDetail = err.response.data.detail
+        if (errorDetail.has_conflicts || errorDetail.error_code === 'FEE_STRUCTURE_CONFLICT') {
+          // Set conflict data and show modal
+          setConflictData({
+            has_conflicts: true,
+            conflicts: errorDetail.conflicts || [],
+            message: errorDetail.message || 'Conflicts found',
+            conflicting_structure_ids: errorDetail.conflicting_structure_ids || []
+          })
+          setShowConflictModal(true)
+          return
+        }
+      }
       // Better error handling to show validation errors
       let message = 'Failed to create annual fee structure'
       if (err.response?.data) {
@@ -608,12 +759,28 @@ const FeeStructureAnnualFormPage = () => {
   return (
     <AppLayout>
       <PageHeader
-        title="Create Annual Fee Structure"
-        subtitle="Define fees for all terms in an academic year"
+        title={isEdit ? 'Edit Annual Fee Structure' : 'Create Annual Fee Structure'}
+        subtitle={isEdit ? 'Create a new version of this annual fee structure' : 'Define fees for all terms in an academic year'}
         action={<BackButton to="/fee-structures" />}
       />
 
       <div className="p-8">
+        {loadingStructure && (
+          <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+            <p className="text-sm text-blue-800">Loading fee structure...</p>
+          </div>
+        )}
+        
+        {isEdit && originalStructure && (
+          <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg">
+            <p className="text-sm font-medium text-yellow-800">Creating New Version</p>
+            <p className="text-sm text-yellow-700 mt-1">
+              You are creating a new version of this annual fee structure. Context fields (Campus, Academic Year, Classes) cannot be changed.
+              {originalStructure.status === 'ACTIVE' && ' The original structure will remain active until you activate this new version.'}
+            </p>
+          </div>
+        )}
+        
         {error && (
           <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -653,47 +820,13 @@ const FeeStructureAnnualFormPage = () => {
                     </div>
                   ))}
                 </div>
-                <div className="space-y-3">
-                  <label className="flex items-start gap-3 cursor-pointer p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
-                    <input
-                      type="radio"
-                      name="mergeStrategy"
-                      value="MERGE"
-                      checked={mergeStrategy === 'MERGE'}
-                      onChange={() => setMergeStrategy('MERGE')}
-                      className="mt-1 w-4 h-4 text-primary-600 focus:ring-primary-500"
-                    />
-                    <div className="flex-1">
-                      <span className="text-sm font-medium text-gray-900">MERGE</span>
-                      <p className="text-xs text-gray-600 mt-1">
-                        Keep existing termly structures and add annual structure alongside them.
-                      </p>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-3 cursor-pointer p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
-                    <input
-                      type="radio"
-                      name="mergeStrategy"
-                      value="OVERRIDE"
-                      checked={mergeStrategy === 'OVERRIDE'}
-                      onChange={() => setMergeStrategy('OVERRIDE')}
-                      className="mt-1 w-4 h-4 text-primary-600 focus:ring-primary-500"
-                    />
-                    <div className="flex-1">
-                      <span className="text-sm font-medium text-gray-900">OVERRIDE</span>
-                      <p className="text-xs text-gray-600 mt-1">
-                        Deactivate existing termly structures and replace with annual structure.
-                      </p>
-                    </div>
-                  </label>
-                </div>
               </div>
               <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => {
                     setShowConflictModal(false)
-                    setMergeStrategy(null)
+                    navigate('/fee-structures')
                   }}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
@@ -702,15 +835,12 @@ const FeeStructureAnnualFormPage = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    if (mergeStrategy) {
-                      setShowConflictModal(false)
-                      handleCreate()
-                    }
+                    setShowConflictModal(false)
+                    handleCreate(true) // Override conflicts
                   }}
-                  disabled={!mergeStrategy}
-                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
                 >
-                  Continue
+                  Override
                 </button>
               </div>
             </div>
@@ -746,7 +876,7 @@ const FeeStructureAnnualFormPage = () => {
                   value={formData.campus_id}
                   onChange={handleChange}
                   required
-                  disabled={isCampusAdmin || loadingData}
+                  disabled={isCampusAdmin || loadingData || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">{loadingData ? 'Loading...' : 'Select Campus'}</option>
@@ -767,7 +897,7 @@ const FeeStructureAnnualFormPage = () => {
                   value={formData.academic_year_id}
                   onChange={handleChange}
                   required
-                  disabled={loadingData}
+                  disabled={loadingData || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">{loadingData ? 'Loading...' : 'Select Academic Year'}</option>
@@ -802,12 +932,13 @@ const FeeStructureAnnualFormPage = () => {
             ) : (
               <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
                 {classes.map(cls => (
-                  <label key={cls.id} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1.5 rounded">
+                  <label key={cls.id} className={`flex items-center gap-2 ${isEdit ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-white'} p-1.5 rounded`}>
                     <input
                       type="checkbox"
                       checked={selectedClassIds.includes(cls.id)}
                       onChange={() => handleClassToggle(cls.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      disabled={isEdit}
+                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed"
                     />
                     <span className="text-xs text-gray-700">{cls.name}</span>
                   </label>
@@ -897,17 +1028,17 @@ const FeeStructureAnnualFormPage = () => {
             </button>
             <button
               type="submit"
-              disabled={loading || loadingData || checkingConflicts}
+              disabled={loading || loadingData || checkingConflicts || loadingStructure}
               className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
             >
               {checkingConflicts ? (
                 <>Checking Conflicts...</>
               ) : loading ? (
-                <>Creating...</>
+                <>{isEdit ? 'Creating New Version...' : 'Creating...'}</>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  Create Annual Fee Structure
+                  {isEdit ? 'Create New Version' : 'Create Annual Fee Structure'}
                 </>
               )}
             </button>

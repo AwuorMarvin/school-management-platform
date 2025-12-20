@@ -105,6 +105,7 @@ export interface FeeStructureTermlyCreate {
   academic_year_id: string
   term_id: string
   class_ids: string[]
+  override_conflicts?: boolean
   line_items: FeeLineItemCreate[]
   // status is not set during creation - determined by academic year and term status
 }
@@ -113,7 +114,7 @@ export interface FeeStructureAnnualCreate {
   campus_id: string
   academic_year_id: string
   class_ids: string[]
-  conflict_resolution: 'MERGE' | 'OVERRIDE'
+  override_conflicts?: boolean
   term_1_items?: FeeLineItemCreate[]
   term_2_items?: FeeLineItemCreate[]
   term_3_items?: FeeLineItemCreate[]
@@ -201,8 +202,8 @@ export const feeStructuresApi = {
   },
 
   // V2 Endpoints
-  createTermly: async (data: FeeStructureTermlyCreate): Promise<FeeStructure> => {
-    const response = await apiClient.post<FeeStructure>('/fee-structures/termly', data)
+  createTermly: async (data: FeeStructureTermlyCreate): Promise<FeeStructure | FeeStructureConflictResponse> => {
+    const response = await apiClient.post<FeeStructure | FeeStructureConflictResponse>('/fee-structures/termly', data)
     return response.data
   },
 
