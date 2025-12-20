@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { feeStructuresApi, FeeStructureTermlyCreate, FeeLineItemCreate } from '../api/feeStructures'
+import { feeStructuresApi, FeeStructureTermlyCreate, FeeStructure } from '../api/feeStructures'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
 import { termsApi, Term } from '../api/terms'
 import { classesApi, Class } from '../api/classes'
@@ -34,17 +34,21 @@ interface LineItem {
 
 const FeeStructureTermlyFormPage = () => {
   const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
+  const isEdit = !!id
   const { user } = useAuthStore()
   const { showToast } = useToastStore()
   
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
+  const [loadingStructure, setLoadingStructure] = useState(false)
   const [error, setError] = useState('')
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([])
   const [terms, setTerms] = useState<Term[]>([])
   const [classes, setClasses] = useState<Class[]>([])
   const [campuses, setCampuses] = useState<Campus[]>([])
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([])
+  const [originalStructure, setOriginalStructure] = useState<FeeStructure | null>(null)
   
   const [formData, setFormData] = useState({
     structure_name: '',
@@ -58,13 +62,17 @@ const FeeStructureTermlyFormPage = () => {
 
   useEffect(() => {
     loadInitialData()
-    // Add initial line item
-    setFormData(prev => ({
-      ...prev,
-      line_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
-      campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
-    }))
-  }, [isCampusAdmin, user?.campus_id])
+    if (isEdit && id) {
+      loadFeeStructure()
+    } else {
+      // Add initial line item for new structure
+      setFormData(prev => ({
+        ...prev,
+        line_items: [{ item_name: '', amount: '0.00', display_order: 0, is_annual: false, is_one_off: false }],
+        campus_id: isCampusAdmin && user?.campus_id ? user.campus_id : '',
+      }))
+    }
+  }, [isEdit, id, isCampusAdmin, user?.campus_id])
 
   useEffect(() => {
     if (formData.academic_year_id) {
@@ -120,6 +128,63 @@ const FeeStructureTermlyFormPage = () => {
       setClasses(response.data)
     } catch (err: any) {
       console.error('Failed to load classes:', err)
+    }
+  }
+
+  const loadFeeStructure = async () => {
+    if (!id) return
+    
+    try {
+      setLoadingStructure(true)
+      const structure = await feeStructuresApi.get(id)
+      
+      // Verify it's a TERM-scoped structure
+      if (structure.structure_scope !== 'TERM') {
+        showToast('This fee structure is not termly. Redirecting...', 'error')
+        navigate('/fee-structures')
+        return
+      }
+      
+      setOriginalStructure(structure)
+      
+      // Prepopulate form data
+      setFormData({
+        structure_name: structure.structure_name,
+        campus_id: structure.campus_id,
+        academic_year_id: structure.academic_year_id,
+        term_id: structure.term_id || '',
+        line_items: structure.line_items.map(item => ({
+          item_name: item.item_name,
+          amount: String(item.amount),
+          display_order: item.display_order,
+          is_annual: item.is_annual || false,
+          is_one_off: item.is_one_off || false,
+        })),
+      })
+      
+      // Set selected class IDs
+      if (structure.class_ids && structure.class_ids.length > 0) {
+        setSelectedClassIds(structure.class_ids)
+      } else if (structure.class_id) {
+        // Legacy support
+        setSelectedClassIds([structure.class_id])
+      }
+      
+      // Load terms for the academic year
+      if (structure.academic_year_id) {
+        await loadTerms()
+      }
+      
+      // Load classes for the campus and academic year
+      if (structure.campus_id && structure.academic_year_id) {
+        await loadClasses()
+      }
+    } catch (err: any) {
+      console.error('Failed to load fee structure:', err)
+      setError(err.response?.data?.message || 'Failed to load fee structure')
+      showToast('Failed to load fee structure', 'error')
+    } finally {
+      setLoadingStructure(false)
     }
   }
 
@@ -352,11 +417,18 @@ const FeeStructureTermlyFormPage = () => {
         })),
       }
 
-      await feeStructuresApi.createTermly(payload)
-      showToast('Fee structure created successfully', 'success')
+      if (isEdit) {
+        // Create a new version - the backend should handle versioning
+        // If backend supports parent_structure_id, we could add it here
+        await feeStructuresApi.createTermly(payload)
+        showToast('New version of fee structure created successfully', 'success')
+      } else {
+        await feeStructuresApi.createTermly(payload)
+        showToast('Fee structure created successfully', 'success')
+      }
       navigate('/fee-structures')
     } catch (err: any) {
-      const message = err.response?.data?.message || 'Failed to create fee structure'
+      const message = err.response?.data?.message || (isEdit ? 'Failed to create new version' : 'Failed to create fee structure')
       setError(message)
       showToast(message, 'error')
     } finally {
@@ -367,12 +439,28 @@ const FeeStructureTermlyFormPage = () => {
   return (
     <AppLayout>
       <PageHeader
-        title="Create Termly Fee Structure"
-        subtitle="Define fees for a specific term"
+        title={isEdit ? 'Edit Termly Fee Structure' : 'Create Termly Fee Structure'}
+        subtitle={isEdit ? 'Create a new version of this fee structure' : 'Define fees for a specific term'}
         action={<BackButton to="/fee-structures" />}
       />
 
       <div className="p-8">
+        {loadingStructure && (
+          <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+            <p className="text-sm text-blue-800">Loading fee structure...</p>
+          </div>
+        )}
+        
+        {isEdit && originalStructure && (
+          <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded-lg">
+            <p className="text-sm font-medium text-yellow-800">Creating New Version</p>
+            <p className="text-sm text-yellow-700 mt-1">
+              You are creating a new version of this fee structure. Context fields (Campus, Academic Year, Term, Classes) cannot be changed.
+              {originalStructure.status === 'ACTIVE' && ' The original structure will remain active until you activate this new version.'}
+            </p>
+          </div>
+        )}
+        
         {error && (
           <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -412,7 +500,7 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.campus_id}
                   onChange={handleChange}
                   required
-                  disabled={isCampusAdmin}
+                  disabled={isCampusAdmin || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Campus</option>
@@ -433,7 +521,8 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.academic_year_id}
                   onChange={handleChange}
                   required
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  disabled={isEdit}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Academic Year</option>
                   {academicYears.map(year => (
@@ -453,7 +542,7 @@ const FeeStructureTermlyFormPage = () => {
                   value={formData.term_id}
                   onChange={handleChange}
                   required
-                  disabled={!formData.academic_year_id}
+                  disabled={!formData.academic_year_id || isEdit}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Term</option>
@@ -488,12 +577,13 @@ const FeeStructureTermlyFormPage = () => {
             ) : (
               <div className="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto p-2 border border-gray-200 rounded-lg bg-gray-50">
                 {classes.map(cls => (
-                  <label key={cls.id} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1.5 rounded">
+                  <label key={cls.id} className={`flex items-center gap-2 ${isEdit ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-white'} p-1.5 rounded`}>
                     <input
                       type="checkbox"
                       checked={selectedClassIds.includes(cls.id)}
                       onChange={() => handleClassToggle(cls.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      disabled={isEdit}
+                      className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed"
                     />
                     <span className="text-xs text-gray-700">{cls.name}</span>
                   </label>
@@ -535,15 +625,15 @@ const FeeStructureTermlyFormPage = () => {
             </button>
             <button
               type="submit"
-              disabled={loading || loadingData}
+              disabled={loading || loadingData || loadingStructure}
               className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
             >
               {loading ? (
-                <>Creating...</>
+                <>{isEdit ? 'Creating New Version...' : 'Creating...'}</>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  Create Fee Structure
+                  {isEdit ? 'Create New Version' : 'Create Fee Structure'}
                 </>
               )}
             </button>

@@ -88,7 +88,7 @@ class FeeStructureAnnualCreate(BaseModel):
     campus_id: UUID = Field(..., description="Campus ID")
     academic_year_id: UUID = Field(..., description="Academic Year ID")
     class_ids: List[UUID] = Field(..., min_length=1, description="List of class IDs (multi-select)")
-    conflict_resolution: Literal["MERGE", "OVERRIDE"] = Field(..., description="How to handle existing termly structures: MERGE or OVERRIDE")
+    override_conflicts: bool = Field(False, description="If true, delete existing conflicting structures and create new one. If false and conflicts exist, returns conflict info.")
     # Term-specific line items
     term_1_items: Optional[List[FeeLineItemCreate]] = Field(None, description="Line items for Term 1")
     term_2_items: Optional[List[FeeLineItemCreate]] = Field(None, description="Line items for Term 2")
@@ -213,7 +213,7 @@ class FeeStructureResponse(BaseModel):
     effective_from: Optional[str] = None
     effective_to: Optional[str] = None
     created_at: str
-    updated_at: str
+    updated_at: Optional[str] = None
     # Multi-class support
     class_ids: List[UUID] = []  # List of class IDs this structure applies to
     classes: Optional[List[dict]] = None  # Class details
@@ -244,6 +244,7 @@ class FeeStructureConflictResponse(BaseModel):
     has_conflicts: bool
     conflicts: List[FeeStructureConflictInfo] = []
     message: str
+    conflicting_structure_ids: List[UUID] = []  # IDs of structures that would conflict
 
 
 class FeeStructureListResponse(BaseModel):
