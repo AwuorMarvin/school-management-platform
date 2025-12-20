@@ -28,6 +28,7 @@ from app.schemas.fee_structure import (
     FeeStructureConflictResponse,
     FeeStructureConflictInfo,
     FeeStructureAnnualCreate,
+    FeeStructureTermlyCreate,
     FeeLineItemCreate
 )
 
@@ -247,6 +248,418 @@ async def list_fee_structures(
             "has_next": skip + limit < total,
             "has_previous": skip > 0
         }
+    )
+
+
+# ============================================================================
+# Create Termly Fee Structure
+# ============================================================================
+# NOTE: This route must come BEFORE /fee-structures/{fee_structure_id} 
+# because FastAPI matches routes in order and the path parameter route
+# would match "termly" as a UUID.
+
+@router.post(
+    "/fee-structures/termly",
+    response_model=FeeStructureResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Fee Structure"],
+    summary="Create termly fee structure"
+)
+async def create_termly_fee_structure(
+    data: FeeStructureTermlyCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> FeeStructureResponse | FeeStructureConflictResponse:
+    """
+    Create a termly fee structure.
+    
+    Checks for existing fee structures for the same campus, academic year, term, and classes.
+    If conflicts exist and override_conflicts=False, returns conflict info with 409 status.
+    If override_conflicts=True, deletes conflicting structures and creates the new one.
+    
+    Annual and one-off items are automatically moved to a YEAR-scoped structure.
+    
+    Permission: All authenticated users (scope-filtered by school)
+    """
+    from datetime import datetime, UTC
+    from uuid import uuid4
+    
+    # Validate campus belongs to school
+    campus_result = await db.execute(
+        select(Campus).where(
+            Campus.id == data.campus_id,
+            Campus.school_id == current_user.school_id
+        )
+    )
+    campus = campus_result.scalar_one_or_none()
+    if not campus:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "CAMPUS_NOT_FOUND",
+                "message": "Campus not found or does not belong to your school"
+            }
+        )
+    
+    # Validate academic year belongs to school
+    ay_result = await db.execute(
+        select(AcademicYear).where(
+            AcademicYear.id == data.academic_year_id,
+            AcademicYear.school_id == current_user.school_id
+        )
+    )
+    academic_year = ay_result.scalar_one_or_none()
+    if not academic_year:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "ACADEMIC_YEAR_NOT_FOUND",
+                "message": "Academic year not found or does not belong to your school"
+            }
+        )
+    
+    # Validate term belongs to academic year and school
+    term_result = await db.execute(
+        select(Term)
+        .join(AcademicYear, Term.academic_year_id == AcademicYear.id)
+        .where(
+            Term.id == data.term_id,
+            AcademicYear.school_id == current_user.school_id,
+            Term.academic_year_id == data.academic_year_id
+        )
+    )
+    term_obj = term_result.scalar_one_or_none()
+    if not term_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "TERM_NOT_FOUND",
+                "message": "Term not found or does not belong to the specified academic year"
+            }
+        )
+    
+    # Validate classes belong to the campus and academic year
+    classes_result = await db.execute(
+        select(Class)
+        .join(Campus, Class.campus_id == Campus.id)
+        .where(
+            Class.id.in_(data.class_ids),
+            Campus.school_id == current_user.school_id,
+            Class.campus_id == data.campus_id,
+            Class.academic_year_id == data.academic_year_id
+        )
+    )
+    classes = {c.id: c for c in classes_result.scalars().all()}
+    
+    if len(classes) != len(data.class_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "INVALID_CLASS_IDS",
+                "message": "One or more class IDs are invalid or do not belong to the specified campus and academic year"
+            }
+        )
+    
+    # Separate line items: regular termly items vs annual/one-off items
+    termly_items: list[FeeLineItemCreate] = []
+    annual_one_off_items: list[FeeLineItemCreate] = []
+    
+    for item in data.line_items:
+        if item.is_annual or item.is_one_off:
+            annual_one_off_items.append(item)
+        else:
+            termly_items.append(item)
+    
+    # Validate we have at least one termly item (annual/one-off will go to YEAR structure)
+    if len(termly_items) == 0 and len(annual_one_off_items) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "NO_VALID_ITEMS",
+                "message": "At least one line item must be provided"
+            }
+        )
+    
+    # Find existing TERM-scoped structures for these classes, term, campus, and academic year
+    conflicting_structure_ids: list[UUID] = []
+    conflicts: list[FeeStructureConflictInfo] = []
+    
+    for class_id in data.class_ids:
+        # Query for TERM-scoped structures for this class, term, campus, and academic year
+        structures_result = await db.execute(
+            select(FeeStructure)
+            .where(
+                FeeStructure.school_id == current_user.school_id,
+                FeeStructure.academic_year_id == data.academic_year_id,
+                FeeStructure.campus_id == data.campus_id,
+                FeeStructure.term_id == data.term_id,
+                FeeStructure.structure_scope == "TERM",
+                or_(
+                    # Check junction table
+                    FeeStructure.id.in_(
+                        select(FeeStructureClass.fee_structure_id).where(
+                            FeeStructureClass.class_id == class_id
+                        )
+                    ),
+                    # Legacy support: check direct class_id field
+                    FeeStructure.class_id == class_id
+                )
+            )
+            .options(
+                selectinload(FeeStructure.term)
+            )
+        )
+        existing_structures = structures_result.scalars().all()
+        
+        if existing_structures:
+            structure_ids = [s.id for s in existing_structures]
+            conflicting_structure_ids.extend(structure_ids)
+            
+            class_obj = classes.get(class_id)
+            term_names = [s.term.name if s.term else "Unknown" for s in existing_structures]
+            conflicts.append(FeeStructureConflictInfo(
+                class_id=class_id,
+                class_name=class_obj.name if class_obj else "Unknown",
+                existing_term_ids=[data.term_id],
+                existing_term_names=term_names,
+                existing_structure_ids=structure_ids
+            ))
+    
+    has_conflicts = len(conflicting_structure_ids) > 0
+    
+    # If conflicts exist and override is False, return conflict info
+    if has_conflicts and not data.override_conflicts:
+        class_names = [c.class_name for c in conflicts]
+        message = f"Found existing fee structures for {len(conflicts)} class(es): {', '.join(class_names)}. Choose Cancel to go back, or Override to delete existing structures and create the new one."
+        
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "FEE_STRUCTURE_CONFLICT",
+                "message": message,
+                "has_conflicts": True,
+                "conflicts": [
+                    {
+                        "class_id": str(c.class_id),
+                        "class_name": c.class_name,
+                        "existing_term_ids": [str(tid) for tid in c.existing_term_ids],
+                        "existing_term_names": c.existing_term_names,
+                        "existing_structure_ids": [str(sid) for sid in c.existing_structure_ids]
+                    }
+                    for c in conflicts
+                ],
+                "conflicting_structure_ids": [str(sid) for sid in conflicting_structure_ids]
+            }
+        )
+    
+    # If override is True, delete conflicting structures
+    if has_conflicts and data.override_conflicts:
+        from sqlalchemy import delete as sql_delete
+        await db.execute(
+            sql_delete(FeeStructure).where(
+                FeeStructure.id.in_(conflicting_structure_ids),
+                FeeStructure.school_id == current_user.school_id
+            )
+        )
+        await db.commit()
+    
+    # Determine status based on term status
+    fee_status = "ACTIVE" if term_obj.status == "ACTIVE" else "INACTIVE"
+    
+    created_structures: list[FeeStructure] = []
+    
+    # Create TERM-scoped structure for regular termly items
+    if termly_items:
+        term_base_fee = sum(item.amount for item in termly_items)
+        
+        structure = FeeStructure(
+            id=uuid4(),
+            school_id=current_user.school_id,
+            structure_name=f"{term_obj.name} - {academic_year.name}",
+            campus_id=data.campus_id,
+            academic_year_id=data.academic_year_id,
+            term_id=data.term_id,
+            structure_scope="TERM",
+            version=1,
+            parent_structure_id=None,
+            status=fee_status,
+            base_fee=term_base_fee,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC)
+        )
+        db.add(structure)
+        await db.flush()
+        
+        # Create class associations
+        for class_id in data.class_ids:
+            fee_structure_class = FeeStructureClass(
+                id=uuid4(),
+                fee_structure_id=structure.id,
+                class_id=class_id,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            db.add(fee_structure_class)
+        
+        # Create line items (only regular termly items)
+        display_order = 0
+        for item_data in termly_items:
+            line_item = FeeLineItem(
+                id=uuid4(),
+                fee_structure_id=structure.id,
+                item_name=item_data.item_name,
+                amount=item_data.amount,
+                display_order=display_order,
+                is_annual=False,  # Termly items are not annual
+                is_one_off=False,  # Termly items are not one-off
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            db.add(line_item)
+            display_order += 1
+        
+        created_structures.append(structure)
+    
+    # Create YEAR-scoped structure for annual and one-off items
+    if annual_one_off_items:
+        # Check if any term in the academic year is active for YEAR structure status
+        terms_for_status = await db.execute(
+            select(Term).where(Term.academic_year_id == data.academic_year_id)
+        )
+        all_terms = terms_for_status.scalars().all()
+        has_active_term = any(term.status == "ACTIVE" for term in all_terms)
+        year_fee_status = "ACTIVE" if has_active_term else "INACTIVE"
+        
+        annual_base_fee = sum(item.amount for item in annual_one_off_items)
+        
+        structure = FeeStructure(
+            id=uuid4(),
+            school_id=current_user.school_id,
+            structure_name=f"Annual Fee Structure - {academic_year.name}",
+            campus_id=data.campus_id,
+            academic_year_id=data.academic_year_id,
+            term_id=None,  # YEAR-scoped
+            structure_scope="YEAR",
+            version=1,
+            parent_structure_id=None,
+            status=year_fee_status,
+            base_fee=annual_base_fee,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC)
+        )
+        db.add(structure)
+        await db.flush()
+        
+        # Create class associations
+        for class_id in data.class_ids:
+            fee_structure_class = FeeStructureClass(
+                id=uuid4(),
+                fee_structure_id=structure.id,
+                class_id=class_id,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            db.add(fee_structure_class)
+        
+        # Create line items for annual/one-off
+        display_order = 0
+        for item_data in annual_one_off_items:
+            line_item = FeeLineItem(
+                id=uuid4(),
+                fee_structure_id=structure.id,
+                item_name=item_data.item_name,
+                amount=item_data.amount,
+                display_order=display_order,
+                is_annual=item_data.is_annual,
+                is_one_off=item_data.is_one_off,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC)
+            )
+            db.add(line_item)
+            display_order += 1
+        
+        created_structures.append(structure)
+    
+    await db.commit()
+    
+    # Return the first created structure (TERM-scoped if it exists, otherwise YEAR-scoped)
+    structure_to_return = created_structures[0] if created_structures else None
+    if not structure_to_return:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "NO_STRUCTURE_CREATED",
+                "message": "Failed to create fee structure"
+            }
+        )
+    
+    # Load relationships for response
+    result = await db.execute(
+        select(FeeStructure)
+        .where(FeeStructure.id == structure_to_return.id)
+        .options(
+            selectinload(FeeStructure.line_items),
+            selectinload(FeeStructure.classes).selectinload(FeeStructureClass.class_),
+            selectinload(FeeStructure.campus),
+            selectinload(FeeStructure.academic_year),
+            selectinload(FeeStructure.term)
+        )
+    )
+    created_structure = result.scalar_one()
+    
+    # Load relationships for response
+    result = await db.execute(
+        select(FeeStructure)
+        .where(FeeStructure.id == structure.id)
+        .options(
+            selectinload(FeeStructure.line_items),
+            selectinload(FeeStructure.classes).selectinload(FeeStructureClass.class_),
+            selectinload(FeeStructure.campus),
+            selectinload(FeeStructure.academic_year),
+            selectinload(FeeStructure.term)
+        )
+    )
+    created_structure = result.scalar_one()
+    
+    # Build response
+    class_ids = [fsc.class_id for fsc in created_structure.classes]
+    classes_data = [
+        {"id": str(fsc.class_id), "name": fsc.class_.name if fsc.class_ else "Unknown"}
+        for fsc in created_structure.classes
+    ]
+    
+    return FeeStructureResponse(
+        id=created_structure.id,
+        school_id=created_structure.school_id,
+        structure_name=created_structure.structure_name,
+        campus_id=created_structure.campus_id,
+        academic_year_id=created_structure.academic_year_id,
+        term_id=created_structure.term_id,
+        structure_scope=created_structure.structure_scope,
+        version=created_structure.version,
+        parent_structure_id=created_structure.parent_structure_id,
+        status=created_structure.status,
+        base_fee=created_structure.base_fee,
+        effective_from=created_structure.effective_from.isoformat() if created_structure.effective_from else None,
+        effective_to=created_structure.effective_to.isoformat() if created_structure.effective_to else None,
+        created_at=created_structure.created_at.isoformat(),
+        updated_at=created_structure.updated_at.isoformat() if created_structure.updated_at else None,
+        class_ids=class_ids,
+        classes=classes_data,
+        campus={"id": str(created_structure.campus.id), "name": created_structure.campus.name} if created_structure.campus else None,
+        academic_year={"id": str(created_structure.academic_year.id), "name": created_structure.academic_year.name} if created_structure.academic_year else None,
+        term={"id": str(created_structure.term.id), "name": created_structure.term.name} if created_structure.term else None,
+        line_items=[
+            {
+                "id": item.id,
+                "item_name": item.item_name,
+                "amount": item.amount,
+                "display_order": item.display_order,
+                "is_annual": item.is_annual,
+                "is_one_off": item.is_one_off
+            }
+            for item in created_structure.line_items
+        ]
     )
 
 

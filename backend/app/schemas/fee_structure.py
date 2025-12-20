@@ -61,6 +61,7 @@ class FeeStructureTermlyCreate(BaseModel):
     academic_year_id: UUID = Field(..., description="Academic Year ID")
     term_id: UUID = Field(..., description="Term ID")
     class_ids: List[UUID] = Field(..., min_length=1, description="List of class IDs (multi-select)")
+    override_conflicts: bool = Field(False, description="If true, delete existing conflicting structures and create new one. If false and conflicts exist, returns conflict info.")
     line_items: List[FeeLineItemCreate] = Field(..., min_length=1, max_length=10, description="Fee line items (1-10 items)")
     
     @field_validator('line_items')

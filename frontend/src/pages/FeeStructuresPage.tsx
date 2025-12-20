@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 
 const FeeStructuresPage = () => {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const { showToast } = useToastStore()
   const [loading, setLoading] = useState(true)
@@ -53,7 +54,7 @@ const FeeStructuresPage = () => {
   const [overviewData, setOverviewData] = useState<AcademicYearFeeOverviewResponse | null>(null)
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
-  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [expandedActiveStructures, setExpandedActiveStructures] = useState<Set<string>>(new Set())
 
   const isAdmin = user?.role === 'SCHOOL_ADMIN' || user?.role === 'CAMPUS_ADMIN' || user?.role === 'SUPER_ADMIN'
 
@@ -286,6 +287,18 @@ const FeeStructuresPage = () => {
     })
   }
 
+  const toggleActiveStructure = (structureId: string) => {
+    setExpandedActiveStructures(prev => {
+      const next = new Set(prev)
+      if (next.has(structureId)) {
+        next.delete(structureId)
+      } else {
+        next.add(structureId)
+      }
+      return next
+    })
+  }
+
   const getClassNames = (structure: FeeStructure): string => {
     if (structure.classes && structure.classes.length > 0) {
       return structure.classes.map(c => c.name).join(', ')
@@ -305,7 +318,7 @@ const FeeStructuresPage = () => {
           isAdmin && (
             <button
               type="button"
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => navigate('/fee-structures/new-annual')}
               className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
@@ -326,77 +339,6 @@ const FeeStructuresPage = () => {
           </div>
         )}
 
-        {/* Create Mode Choice Modal */}
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-gray-600" />
-                  <h2 className="text-lg font-semibold text-gray-900">Choose Fee Structure Type</h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="px-6 py-4 space-y-4">
-                <p className="text-sm text-gray-600">
-                  Create a termly structure for a single term or an annual structure that applies
-                  across all terms in the academic year.
-                </p>
-                <div className="space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateModal(false)
-                      window.location.href = '/fee-structures/new-termly'
-                    }}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 text-left transition-colors"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Calendar className="w-4 h-4" />
-                      <span className="font-semibold text-gray-900">Termly Fee Structure</span>
-                    </div>
-                    <span className="block text-xs text-gray-500 ml-6">
-                      Define a fee structure for a specific term.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateModal(false)
-                      window.location.href = '/fee-structures/new-annual'
-                    }}
-                    className="w-full px-4 py-3 border-2 border-primary-600 rounded-lg text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 hover:border-primary-700 text-left transition-colors"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Calendar className="w-4 h-4" />
-                      <span className="font-semibold text-primary-800">
-                        Annual Fee Structure
-                      </span>
-                    </div>
-                    <span className="block text-xs text-primary-700 ml-6">
-                      Define a yearly fee structure for all terms in an academic year.
-                    </span>
-                  </button>
-                </div>
-              </div>
-              <div className="px-6 py-3 border-t border-gray-200 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Filters */}
         {academicYears.length > 0 && (
@@ -569,53 +511,117 @@ const FeeStructuresPage = () => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {activeStructures.map((structure) => (
-                        <tr key={structure.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {structure.structure_name}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {structure.campus?.name || 'N/A'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {getClassNames(structure)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {structure.academic_year?.name || selectedAcademicYear?.name || 'N/A'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {structure.term?.name || (structure.structure_scope === 'YEAR' ? 'All Terms' : 'N/A')}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            v{structure.version || 1}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {structure.structure_scope || 'TERM'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <StatusBadge 
-                              status={structure.status} 
-                              variant={structure.status === 'ACTIVE' ? 'success' : 'default'}
-                            />
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
-                            {formatCurrency(structure.base_fee)}
-                          </td>
-                          {isAdmin && (
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                              <div className="flex items-center gap-2">
-                                <Link
-                                  to={`/fee-structures/${structure.id}/edit`}
-                                  className="text-gray-600 hover:text-primary-600 flex items-center gap-1"
-                                  title="View / Edit"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </Link>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
+                      {activeStructures.map((structure) => {
+                        const isExpanded = expandedActiveStructures.has(structure.id)
+                        return (
+                          <React.Fragment key={structure.id}>
+                            <tr className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                {structure.structure_name}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                {structure.campus?.name || 'N/A'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                {getClassNames(structure)}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                {structure.academic_year?.name || selectedAcademicYear?.name || 'N/A'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                {structure.term?.name || (structure.structure_scope === 'YEAR' ? 'All Terms' : 'N/A')}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                v{structure.version || 1}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                {structure.structure_scope || 'TERM'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <StatusBadge 
+                                  status={structure.status} 
+                                  variant={structure.status === 'ACTIVE' ? 'success' : 'default'}
+                                />
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
+                                {formatCurrency(structure.base_fee)}
+                              </td>
+                              {isAdmin && (
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleActiveStructure(structure.id)}
+                                    className="text-gray-600 hover:text-primary-600 flex items-center gap-1"
+                                    title="View"
+                                  >
+                                    {isExpanded ? (
+                                      <>
+                                        <ChevronDown className="w-4 h-4" />
+                                        <span className="text-xs">View</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ChevronRight className="w-4 h-4" />
+                                        <span className="text-xs">View</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                            {isExpanded && structure.line_items && structure.line_items.length > 0 && (
+                              <tr>
+                                <td colSpan={isAdmin ? 10 : 9} className="px-6 py-4 bg-gray-50">
+                                  <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                      <thead className="bg-white">
+                                        <tr>
+                                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Item Name
+                                          </th>
+                                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                                            Amount
+                                          </th>
+                                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                                            Total
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="bg-white divide-y divide-gray-200">
+                                        {structure.line_items
+                                          .sort((a, b) => Number(b.amount) - Number(a.amount))
+                                          .map((item, idx) => {
+                                            const itemTotal = item.amount
+                                            return (
+                                              <tr key={idx} className="hover:bg-gray-50">
+                                                <td className="px-4 py-2 text-sm text-gray-900">
+                                                  {item.item_name}
+                                                  {(item.is_annual || item.is_one_off) && (
+                                                    <span className="text-xs text-gray-500 italic ml-2">
+                                                      ({item.is_annual && 'Annual fee'}
+                                                      {item.is_annual && item.is_one_off && ' / '}
+                                                      {item.is_one_off && 'One-time fee'})
+                                                    </span>
+                                                  )}
+                                                </td>
+                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                                                  {formatCurrency(item.amount)}
+                                                </td>
+                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                                                  {formatCurrency(itemTotal)}
+                                                </td>
+                                              </tr>
+                                            )
+                                          })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -678,19 +684,8 @@ const FeeStructuresPage = () => {
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
                                   {row.campus_name}
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleRow(row.class_id)}
-                                    className="flex items-center gap-2 font-medium hover:text-primary-600 transition-colors"
-                                  >
-                                    {isExpanded ? (
-                                      <ChevronDown className="w-4 h-4" />
-                                    ) : (
-                                      <ChevronRight className="w-4 h-4" />
-                                    )}
-                                    {row.class_name}
-                                  </button>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                                  {row.class_name}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
                                   {formatCurrency(row.term_1_amount)}
@@ -712,82 +707,129 @@ const FeeStructuresPage = () => {
                                 </td>
                                 {isAdmin && (
                                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                    <Link
-                                      to={`/fee-structures/${row.structure_ids[0]}/edit`}
-                                      className="text-gray-600 hover:text-primary-600 flex items-center gap-1"
-                                      title="View / Edit"
-                                    >
-                                      <Eye className="w-4 h-4" />
-                                    </Link>
+                                    <div className="flex items-center gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRow(row.class_id)}
+                                        className="text-gray-600 hover:text-primary-600 flex items-center gap-1"
+                                        title="View"
+                                      >
+                                        {isExpanded ? (
+                                          <>
+                                            <ChevronDown className="w-4 h-4" />
+                                            <span className="text-xs">View</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ChevronRight className="w-4 h-4" />
+                                            <span className="text-xs">View</span>
+                                          </>
+                                        )}
+                                      </button>
+                                      <Link
+                                        to={`/fee-structures/${row.structure_ids[0]}/edit`}
+                                        className="text-gray-600 hover:text-primary-600 flex items-center gap-1"
+                                        title="Edit"
+                                      >
+                                        <Edit className="w-4 h-4" />
+                                        <span className="text-xs">Edit</span>
+                                      </Link>
+                                    </div>
                                   </td>
                                 )}
                               </tr>
-                              {isExpanded && (
-                                <tr>
-                                  <td colSpan={isAdmin ? 9 : 8} className="px-6 py-4 bg-gray-50">
-                                    {!row.line_items || row.line_items.length === 0 ? (
-                                      <p className="text-sm text-gray-600">
-                                        No line item details available for this class.
-                                      </p>
-                                    ) : (
-                                      <div className="overflow-x-auto">
-                                        <table className="min-w-full divide-y divide-gray-200">
-                                          <thead className="bg-white">
-                                            <tr>
-                                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                Category
-                                              </th>
-                                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                Item Name
-                                              </th>
-                                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
-                                                Amount
-                                              </th>
-                                            </tr>
-                                          </thead>
-                                          <tbody className="bg-white divide-y divide-gray-200">
-                                            {row.line_items
-                                              .sort((a, b) => {
-                                                // Sort by term order, then display_order
-                                                const termOrder = { TERM_1: 1, TERM_2: 2, TERM_3: 3, ANNUAL: 4, ONE_OFF: 5 }
-                                                const termDiff = (termOrder[a.term] || 99) - (termOrder[b.term] || 99)
-                                                if (termDiff !== 0) return termDiff
-                                                return a.display_order - b.display_order
-                                              })
-                                              .map((item, idx) => (
-                                                <tr key={idx} className="hover:bg-gray-50">
-                                                  <td className="px-4 py-2 whitespace-nowrap">
-                                                    <span className="text-xs font-medium text-gray-700">
-                                                      {item.term === 'TERM_1' && 'Term 1'}
-                                                      {item.term === 'TERM_2' && 'Term 2'}
-                                                      {item.term === 'TERM_3' && 'Term 3'}
-                                                      {item.term === 'ANNUAL' && 'Annual'}
-                                                      {item.term === 'ONE_OFF' && 'One-Off'}
-                                                    </span>
-                                                  </td>
-                                                  <td className="px-4 py-2">
-                                                    <div className="text-sm text-gray-900">{item.item_name}</div>
-                                                    {(item.is_annual || item.is_one_off) && (
-                                                      <div className="text-xs text-gray-500 mt-1">
-                                                        {item.is_annual && 'Annual fee'}
-                                                        {item.is_one_off && 'One-time fee'}
-                                                      </div>
-                                                    )}
-                                                  </td>
-                                                  <td className="px-4 py-2 whitespace-nowrap text-right">
-                                                    <span className="text-sm font-semibold text-gray-900">
-                                                      {formatCurrency(item.amount)}
-                                                    </span>
-                                                  </td>
-                                                </tr>
-                                              ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              )}
+                              {isExpanded && row.line_items && row.line_items.length > 0 && (() => {
+                                // Group items by item_name to handle items that appear in multiple terms
+                                const itemsByName = new Map<string, Array<typeof row.line_items[0]>>()
+                                
+                                row.line_items.forEach(item => {
+                                  if (!itemsByName.has(item.item_name)) {
+                                    itemsByName.set(item.item_name, [])
+                                  }
+                                  itemsByName.get(item.item_name)!.push(item)
+                                })
+                                
+                                // Convert to array and calculate totals for sorting
+                                const sortedItems = Array.from(itemsByName.entries())
+                                  .map(([itemName, items]) => {
+                                    const sortedItems = items.sort((a, b) => a.display_order - b.display_order)
+                                    // Find item for each term/category to calculate total
+                                    const term1Item = sortedItems.find(item => item.term === 'TERM_1')
+                                    const term2Item = sortedItems.find(item => item.term === 'TERM_2')
+                                    const term3Item = sortedItems.find(item => item.term === 'TERM_3')
+                                    const annualItem = sortedItems.find(item => item.term === 'ANNUAL')
+                                    const oneOffItem = sortedItems.find(item => item.term === 'ONE_OFF')
+                                    
+                                    const itemTotal = (term1Item?.amount || 0) +
+                                                     (term2Item?.amount || 0) +
+                                                     (term3Item?.amount || 0) +
+                                                     (annualItem?.amount || 0) +
+                                                     (oneOffItem?.amount || 0)
+                                    
+                                    return {
+                                      itemName,
+                                      items: sortedItems,
+                                      itemTotal
+                                    }
+                                  })
+                                  .sort((a, b) => b.itemTotal - a.itemTotal) // Sort by total descending (highest to lowest)
+                                
+                                return sortedItems.map(({ itemName, items, itemTotal }, idx) => {
+                                  // Find item for each term/category
+                                  const term1Item = items.find(item => item.term === 'TERM_1')
+                                  const term2Item = items.find(item => item.term === 'TERM_2')
+                                  const term3Item = items.find(item => item.term === 'TERM_3')
+                                  const annualItem = items.find(item => item.term === 'ANNUAL')
+                                  const oneOffItem = items.find(item => item.term === 'ONE_OFF')
+                                  
+                                  // Determine if this is an annual or one-off item
+                                  const isAnnual = annualItem?.is_annual || false
+                                  const isOneOff = oneOffItem?.is_one_off || false
+                                  
+                                  return (
+                                    <tr key={idx} className="hover:bg-gray-50 bg-gray-50/50">
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                                        {/* Empty for campus column */}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900 pl-8">
+                                        <div className="flex items-center gap-2">
+                                          <span>{itemName}</span>
+                                          {(isAnnual || isOneOff) && (
+                                            <span className="text-xs text-gray-500 italic">
+                                              ({isAnnual && 'Annual fee'}
+                                              {isAnnual && isOneOff && ' / '}
+                                              {isOneOff && 'One-time fee'})
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {term1Item ? formatCurrency(term1Item.amount) : '-'}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {term2Item ? formatCurrency(term2Item.amount) : '-'}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {term3Item ? formatCurrency(term3Item.amount) : '-'}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {oneOffItem ? formatCurrency(oneOffItem.amount) : '-'}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {annualItem ? formatCurrency(annualItem.amount) : '-'}
+                                      </td>
+                                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                        {formatCurrency(itemTotal)}
+                                      </td>
+                                      {isAdmin && (
+                                        <td className="px-6 py-3 whitespace-nowrap text-sm font-medium">
+                                          {/* Actions column - empty for line items */}
+                                        </td>
+                                      )}
+                                    </tr>
+                                  )
+                                })
+                              })()}
                             </React.Fragment>
                           )
                         })}
