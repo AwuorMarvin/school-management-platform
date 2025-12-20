@@ -113,7 +113,7 @@ export interface FeeStructureAnnualCreate {
   campus_id: string
   academic_year_id: string
   class_ids: string[]
-  conflict_resolution: 'MERGE' | 'OVERRIDE'
+  override_conflicts?: boolean
   term_1_items?: FeeLineItemCreate[]
   term_2_items?: FeeLineItemCreate[]
   term_3_items?: FeeLineItemCreate[]

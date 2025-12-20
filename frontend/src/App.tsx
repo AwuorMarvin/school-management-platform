@@ -34,6 +34,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import FeeStructureYearlyFormPage from './pages/FeeStructureYearlyFormPage'
 import FeeStructureTermlyFormPage from './pages/FeeStructureTermlyFormPage'
 import FeeStructureAnnualFormPage from './pages/FeeStructureAnnualFormPage'
+import FeeStructureEditRedirect from './pages/FeeStructureEditRedirect'
 import FeeStatusPage from './pages/FeeStatusPage'
 import ToastContainer from './components/ToastContainer'
 
@@ -384,7 +385,23 @@ function App() {
           path="/fee-structures/:id/edit"
           element={
             <ProtectedRoute>
-              <FeeStructureFormPage />
+              <FeeStructureEditRedirect />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/fee-structures/:id/edit-termly"
+          element={
+            <ProtectedRoute>
+              <FeeStructureTermlyFormPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/fee-structures/:id/edit-annual"
+          element={
+            <ProtectedRoute>
+              <FeeStructureAnnualFormPage />
             </ProtectedRoute>
           }
         />

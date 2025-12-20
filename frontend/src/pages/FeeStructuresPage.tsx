@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
@@ -673,8 +673,8 @@ const FeeStructuresPage = () => {
                         {overviewData.rows.map((row) => {
                           const isExpanded = expandedRows.has(row.class_id)
                           return (
-                            <>
-                              <tr key={row.class_id} className="hover:bg-muted/50">
+                            <React.Fragment key={`${row.campus_id}-${row.class_id}`}>
+                              <tr className="hover:bg-muted/50">
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
                                   {row.campus_name}
                                 </td>
@@ -788,7 +788,7 @@ const FeeStructuresPage = () => {
                                   </td>
                                 </tr>
                               )}
-                            </>
+                            </React.Fragment>
                           )
                         })}
                       </tbody>
