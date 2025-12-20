@@ -22,6 +22,40 @@ export interface ParentStudent {
   student_status: string
 }
 
+export interface ChildTeacher {
+  id: string
+  name: string
+  phone_number: string
+  subjects: Array<{ id: string; name: string }>
+  students_in_class: number
+}
+
+export interface ChildTeachersResponse {
+  child: {
+    id: string
+    name: string
+    class: {
+      id: string
+      name: string
+    } | null
+  }
+  teachers: ChildTeacher[]
+}
+
+export interface AllChildrenTeachersResponse {
+  children: Array<{
+    child: {
+      id: string
+      name: string
+      class: {
+        id: string
+        name: string
+      }
+    }
+    teachers: ChildTeacher[]
+  }>
+}
+
 export interface ParentCreate {
   email: string
   phone_number: string
@@ -79,6 +113,16 @@ export const parentsApi = {
 
   getStudents: async (parentId: string): Promise<ParentStudent[]> => {
     const response = await apiClient.get<ParentStudent[]>(`/parents/${parentId}/students`)
+    return response.data
+  },
+
+  getChildTeachers: async (childId: string): Promise<ChildTeachersResponse> => {
+    const response = await apiClient.get<ChildTeachersResponse>(`/parents/me/children/${childId}/teachers`)
+    return response.data
+  },
+
+  getAllTeachers: async (): Promise<AllChildrenTeachersResponse> => {
+    const response = await apiClient.get<AllChildrenTeachersResponse>('/parents/me/teachers')
     return response.data
   },
 }
