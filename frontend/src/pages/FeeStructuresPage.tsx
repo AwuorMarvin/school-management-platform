@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 
 const FeeStructuresPage = () => {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const { showToast } = useToastStore()
   const [loading, setLoading] = useState(true)
@@ -54,7 +55,6 @@ const FeeStructuresPage = () => {
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [expandedActiveStructures, setExpandedActiveStructures] = useState<Set<string>>(new Set())
-  const [showCreateModal, setShowCreateModal] = useState(false)
 
   const isAdmin = user?.role === 'SCHOOL_ADMIN' || user?.role === 'CAMPUS_ADMIN' || user?.role === 'SUPER_ADMIN'
 
@@ -318,7 +318,7 @@ const FeeStructuresPage = () => {
           isAdmin && (
             <button
               type="button"
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => navigate('/fee-structures/new-annual')}
               className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
@@ -339,77 +339,6 @@ const FeeStructuresPage = () => {
           </div>
         )}
 
-        {/* Create Mode Choice Modal */}
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-gray-600" />
-                  <h2 className="text-lg font-semibold text-gray-900">Choose Fee Structure Type</h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              <div className="px-6 py-4 space-y-4">
-                <p className="text-sm text-gray-600">
-                  Create a termly structure for a single term or an annual structure that applies
-                  across all terms in the academic year.
-                </p>
-                <div className="space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateModal(false)
-                      window.location.href = '/fee-structures/new-termly'
-                    }}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 text-left transition-colors"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Calendar className="w-4 h-4" />
-                      <span className="font-semibold text-gray-900">Termly Fee Structure</span>
-                    </div>
-                    <span className="block text-xs text-gray-500 ml-6">
-                      Define a fee structure for a specific term.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateModal(false)
-                      window.location.href = '/fee-structures/new-annual'
-                    }}
-                    className="w-full px-4 py-3 border-2 border-primary-600 rounded-lg text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 hover:border-primary-700 text-left transition-colors"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Calendar className="w-4 h-4" />
-                      <span className="font-semibold text-primary-800">
-                        Annual Fee Structure
-                      </span>
-                    </div>
-                    <span className="block text-xs text-primary-700 ml-6">
-                      Define a yearly fee structure for all terms in an academic year.
-                    </span>
-                  </button>
-                </div>
-              </div>
-              <div className="px-6 py-3 border-t border-gray-200 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Filters */}
         {academicYears.length > 0 && (
