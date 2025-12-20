@@ -69,6 +69,10 @@ class User(BaseModel, TenantMixin):
         back_populates="user",
         uselist=False
     )
+    teacher: Mapped["Teacher | None"] = relationship(
+        back_populates="user",
+        uselist=False
+    )
     account_setup_tokens: Mapped[list["AccountSetupToken"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan"

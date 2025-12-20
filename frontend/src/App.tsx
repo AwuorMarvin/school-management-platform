@@ -19,6 +19,9 @@ import SubjectFormPage from './pages/SubjectFormPage'
 import PerformanceEntryPage from './pages/PerformanceEntryPage'
 import PerformanceViewPage from './pages/PerformanceViewPage'
 import TeacherFormPage from './pages/TeacherFormPage'
+import TeachersPage from './pages/TeachersPage'
+import TeacherDetailPage from './pages/TeacherDetailPage'
+import ParentTeachersPage from './pages/ParentTeachersPage'
 import SubjectsPage from './pages/SubjectsPage'
 import TermsPage from './pages/TermsPage'
 import ClubActivitiesPage from './pages/ClubActivitiesPage'
@@ -245,10 +248,42 @@ function App() {
           }
         />
         <Route
+          path="/teachers"
+          element={
+            <ProtectedRoute>
+              <TeachersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/teachers/new"
           element={
             <ProtectedRoute>
               <TeacherFormPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/teachers/:id"
+          element={
+            <ProtectedRoute>
+              <TeacherDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/teachers/:id/edit"
+          element={
+            <ProtectedRoute>
+              <TeacherFormPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/parents/teachers"
+          element={
+            <ProtectedRoute>
+              <ParentTeachersPage />
             </ProtectedRoute>
           }
         />
