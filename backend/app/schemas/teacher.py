@@ -106,9 +106,11 @@ class TeacherUpdate(BaseModel):
 class TeacherAssignmentCreate(BaseModel):
     """Schema for creating a teacher assignment."""
     
-    class_id: UUID = Field(..., description="Class ID")
+    class_ids: List[UUID] = Field(..., min_length=1, description="List of class IDs (at least one required)")
     subject_ids: List[UUID] = Field(..., min_length=1, description="List of subject IDs (at least one required)")
-    start_date: Optional[date] = Field(None, description="Start date (defaults to today)")
+    start_date: date = Field(..., description="Start date (required)")
+    end_date: Optional[date] = Field(None, description="End date (optional, NULL for active assignment)")
+    override_conflicts: bool = Field(False, description="If true, end conflicting assignments from other teachers")
 
 
 class TeacherAssignmentBulkCreate(BaseModel):

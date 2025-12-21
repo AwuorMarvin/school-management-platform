@@ -7,7 +7,7 @@ from uuid import UUID
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func, and_, or_, case, distinct
+from sqlalchemy import select, func, and_, or_, case, distinct, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -163,6 +163,271 @@ def format_teacher_name(teacher: Teacher) -> str:
     return " ".join(parts)
 
 
+async def create_teacher_assignments(
+    teacher: Teacher,
+    assignment_data: TeacherAssignmentCreate,
+    current_user: User,
+    db: AsyncSession
+) -> tuple[list[TeacherClassAssignment], list[dict]]:
+    """
+    Helper function to create teacher assignments.
+    
+    Returns:
+        - List of created assignments
+        - List of conflicts (if any) with format: {"class_id": UUID, "subject_id": UUID, "existing_teacher_id": UUID, "existing_teacher_name": str}
+    """
+    created_assignments = []
+    conflicts = []
+    
+    # Get all classes (join Campus to filter by school_id)
+    from app.models import Campus
+    classes_result = await db.execute(
+        select(Class).join(
+            Campus, Class.campus_id == Campus.id
+        ).where(
+            Class.id.in_(assignment_data.class_ids),
+            Campus.school_id == current_user.school_id
+        ).options(
+            selectinload(Class.campus),
+            selectinload(Class.academic_year)
+        )
+    )
+    classes = {cls.id: cls for cls in classes_result.scalars().all()}
+    
+    # Validate all classes exist
+    missing_classes = set(assignment_data.class_ids) - set(classes.keys())
+    if missing_classes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "CLASS_NOT_FOUND",
+                "message": f"Classes not found: {', '.join(str(cid) for cid in missing_classes)}",
+                "recovery": "Verify the class IDs"
+            }
+        )
+    
+    # Validate campus match for all classes
+    for class_id, class_obj in classes.items():
+        await validate_campus_match(teacher, class_obj, db)
+        await validate_active_class(class_id, db)
+    
+    # Validate all subjects belong to at least one of the selected classes
+    # Get all class_subject relationships for selected classes
+    class_subjects_result = await db.execute(
+        select(ClassSubject).where(
+            ClassSubject.class_id.in_(assignment_data.class_ids)
+        )
+    )
+    class_subjects = class_subjects_result.scalars().all()
+    
+    # Build map of class_id -> set of subject_ids
+    class_subject_map: dict[UUID, set[UUID]] = {}
+    for cs in class_subjects:
+        if cs.class_id not in class_subject_map:
+            class_subject_map[cs.class_id] = set()
+        class_subject_map[cs.class_id].add(cs.subject_id)
+    
+    # Validate each subject belongs to at least one class
+    all_available_subjects = set()
+    for subject_set in class_subject_map.values():
+        all_available_subjects.update(subject_set)
+    
+    invalid_subjects = set(assignment_data.subject_ids) - all_available_subjects
+    if invalid_subjects:
+        subjects_result = await db.execute(
+            select(Subject).where(Subject.id.in_(list(invalid_subjects)))
+        )
+        subject_names = [s.name for s in subjects_result.scalars().all()]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "SUBJECT_NOT_IN_CLASSES",
+                "message": f"Subjects {', '.join(subject_names)} are not offered in any of the selected classes",
+                "recovery": "Select subjects that are offered in at least one of the selected classes"
+            }
+        )
+    
+    # Check for conflicts: other teachers already assigned to same (class, subject) with overlapping dates
+    new_start_date = assignment_data.start_date
+    new_end_date = assignment_data.end_date
+    
+    for class_id in assignment_data.class_ids:
+        for subject_id in assignment_data.subject_ids:
+            # Check if this subject is actually in this class
+            if class_id not in class_subject_map or subject_id not in class_subject_map[class_id]:
+                continue  # Skip if subject not in this class
+            
+            # Get all existing assignments by other teachers for this (class, subject)
+            existing_result = await db.execute(
+                select(TeacherClassAssignment).join(
+                    User, TeacherClassAssignment.teacher_id == User.id
+                ).where(
+                    TeacherClassAssignment.class_id == class_id,
+                    TeacherClassAssignment.subject_id == subject_id,
+                    TeacherClassAssignment.teacher_id != teacher.user_id  # Different teacher
+                ).options(
+                    selectinload(TeacherClassAssignment.teacher)
+                )
+            )
+            existing_assignments = existing_result.scalars().all()
+            
+            # Check each existing assignment for date overlap
+            for existing in existing_assignments:
+                existing_start = existing.start_date
+                existing_end = existing.end_date
+                
+                # Determine if date ranges overlap
+                overlap = False
+                
+                if existing_end is None:
+                    # Existing assignment is active (no end_date)
+                    if new_end_date is None:
+                        # Both are active (no end_date) - they conflict if new starts on or after existing
+                        # Since both continue indefinitely, they will overlap from max(start dates) onwards
+                        overlap = new_start_date >= existing_start
+                    else:
+                        # New has end_date, existing is active
+                        # Conflict if new range overlaps with existing (new.end_date >= existing.start_date)
+                        overlap = new_end_date >= existing_start
+                else:
+                    # Existing assignment has end_date
+                    if new_end_date is None:
+                        # New is active, existing has end_date
+                        # Conflict if new starts before existing ends
+                        overlap = new_start_date <= existing_end
+                    else:
+                        # Both have end_dates
+                        # Conflict if ranges overlap: new.start <= existing.end AND new.end >= existing.start
+                        overlap = new_start_date <= existing_end and new_end_date >= existing_start
+                
+                if overlap:
+                    # Get subject name for conflict details
+                    subject_result = await db.execute(
+                        select(Subject).where(Subject.id == subject_id)
+                    )
+                    subject = subject_result.scalar_one_or_none()
+                    subject_name = subject.name if subject else "Unknown"
+                    
+                    # Conflict found
+                    conflicts.append({
+                        "class_id": class_id,
+                        "class_name": classes[class_id].name,
+                        "subject_id": subject_id,
+                        "subject_name": subject_name,
+                        "existing_teacher_id": existing.teacher_id,
+                        "existing_teacher_name": f"{existing.teacher.first_name} {existing.teacher.last_name}",
+                        "existing_start_date": existing_start.isoformat(),
+                        "existing_end_date": existing_end.isoformat() if existing_end else None,
+                        "new_start_date": new_start_date.isoformat(),
+                        "new_end_date": new_end_date.isoformat() if new_end_date else None
+                    })
+                    break  # Only need to report one conflict per (class, subject) combination
+    
+    # If conflicts exist and override is not requested, return conflicts
+    if conflicts and not assignment_data.override_conflicts:
+        return [], conflicts
+    
+    # If override requested, end conflicting assignments by setting their end_date
+    if conflicts and assignment_data.override_conflicts:
+        # End conflicting assignments by setting end_date to one day before new assignment starts
+        override_date = new_start_date - timedelta(days=1)
+        
+        # Get all conflicting assignments to end
+        conflict_class_ids = {c["class_id"] for c in conflicts}
+        conflict_subject_ids = {c["subject_id"] for c in conflicts}
+        
+        conflicting_assignments_result = await db.execute(
+            select(TeacherClassAssignment).where(
+                TeacherClassAssignment.class_id.in_(list(conflict_class_ids)),
+                TeacherClassAssignment.subject_id.in_(list(conflict_subject_ids)),
+                TeacherClassAssignment.teacher_id != teacher.user_id
+            )
+        )
+        conflicting_assignments = conflicting_assignments_result.scalars().all()
+        
+        # End each conflicting assignment that overlaps
+        for conflict_assignment in conflicting_assignments:
+            # Check if this assignment actually overlaps
+            existing_start = conflict_assignment.start_date
+            existing_end = conflict_assignment.end_date
+            
+            overlap = False
+            if existing_end is None:
+                if new_end_date is None:
+                    overlap = new_start_date >= existing_start
+                else:
+                    overlap = new_end_date >= existing_start
+            else:
+                if new_end_date is None:
+                    overlap = new_start_date <= existing_end
+                else:
+                    overlap = new_start_date <= existing_end and new_end_date >= existing_start
+            
+            if overlap:
+                # End this assignment
+                conflict_assignment.end_date = override_date
+                conflict_assignment.updated_at = datetime.now(UTC)
+        
+        await db.flush()
+    
+    # Check for duplicate assignments (same teacher, same class, same subject)
+    for class_id in assignment_data.class_ids:
+        for subject_id in assignment_data.subject_ids:
+            # Check if this subject is actually in this class
+            if class_id not in class_subject_map or subject_id not in class_subject_map[class_id]:
+                continue  # Skip if subject not in this class
+            
+            # Check if this teacher already has an overlapping assignment
+            existing_result = await db.execute(
+                select(TeacherClassAssignment).where(
+                    TeacherClassAssignment.teacher_id == teacher.user_id,
+                    TeacherClassAssignment.class_id == class_id,
+                    TeacherClassAssignment.subject_id == subject_id
+                )
+            )
+            existing_assignments = existing_result.scalars().all()
+            
+            # Check for overlaps with existing assignments by same teacher
+            has_overlap = False
+            for existing in existing_assignments:
+                existing_start = existing.start_date
+                existing_end = existing.end_date
+                
+                if existing_end is None:
+                    if new_end_date is None:
+                        has_overlap = new_start_date >= existing_start
+                    else:
+                        has_overlap = new_end_date >= existing_start
+                else:
+                    if new_end_date is None:
+                        has_overlap = new_start_date <= existing_end
+                    else:
+                        has_overlap = new_start_date <= existing_end and new_end_date >= existing_start
+                
+                if has_overlap:
+                    break
+            
+            if has_overlap:
+                continue  # Skip creating duplicate/overlapping assignment for same teacher
+            
+            # Create assignment with provided dates
+            new_assignment = TeacherClassAssignment(
+                teacher_id=teacher.user_id,  # Use user_id, not teacher.id (FK references user.id)
+                class_id=class_id,
+                subject_id=subject_id,
+                campus_id=teacher.campus_id,
+                start_date=assignment_data.start_date,
+                end_date=assignment_data.end_date,  # Can be None for active assignment
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            db.add(new_assignment)
+            await db.flush()
+            created_assignments.append(new_assignment)
+    
+    return created_assignments, conflicts
+
+
 # ============================================================================
 # List Teachers
 # ============================================================================
@@ -238,21 +503,22 @@ async def list_teachers(
     teachers = result.scalars().all()
     
     # Get metrics for all teachers in one query (no N+1)
-    teacher_ids = [t.id for t in teachers]
-    metrics_dict = await get_teacher_list_metrics(teacher_ids, current_user.school_id, db)
+    # Use user_id because TeacherClassAssignment.teacher_id references user.id
+    teacher_user_ids = [t.user_id for t in teachers]
+    metrics_dict = await get_teacher_list_metrics(teacher_user_ids, current_user.school_id, db)
     
     # Build response
     data = []
     for teacher in teachers:
-        metrics = metrics_dict.get(teacher.id, {
+        metrics = metrics_dict.get(teacher.user_id, {
             "subjects_taught": 0,
             "classes_taught": 0,
             "total_students": 0,
             "subject_ratio": None
         })
         
-        # Compute status
-        status, _ = await compute_teacher_status(teacher.id, db)
+        # Compute status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+        status, _ = await compute_teacher_status(teacher.user_id, db)
         
         data.append(TeacherListItem(
             id=teacher.id,
@@ -335,19 +601,21 @@ async def get_teacher(
             }
         )
     
-    # Compute status
-    status, status_reason = await compute_teacher_status(teacher.id, db)
+    # Compute status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    status, status_reason = await compute_teacher_status(teacher.user_id, db)
     
-    # Get current assignments (end_date IS NULL)
-    current_assignments_query = select(TeacherClassAssignment).where(
+    # Get current assignments (end_date IS NULL) - use user_id because TeacherClassAssignment.teacher_id references user.id
+    current_assignments_query = select(TeacherClassAssignment).join(
+        Class, TeacherClassAssignment.class_id == Class.id
+    ).where(
         and_(
-            TeacherClassAssignment.teacher_id == teacher_id,
+            TeacherClassAssignment.teacher_id == teacher.user_id,
             TeacherClassAssignment.end_date.is_(None)
         )
     ).options(
         selectinload(TeacherClassAssignment.class_),
         selectinload(TeacherClassAssignment.subject)
-    ).order_by(TeacherClassAssignment.class_.name)
+    ).order_by(Class.name)
     
     current_assignments_result = await db.execute(current_assignments_query)
     current_assignments = current_assignments_result.scalars().all()
@@ -401,10 +669,10 @@ async def get_teacher(
             end_date=None
         ))
     
-    # Get assignment history (end_date IS NOT NULL)
+    # Get assignment history (end_date IS NOT NULL) - use user_id because TeacherClassAssignment.teacher_id references user.id
     history_query = select(TeacherClassAssignment).where(
         and_(
-            TeacherClassAssignment.teacher_id == teacher_id,
+            TeacherClassAssignment.teacher_id == teacher.user_id,
             TeacherClassAssignment.end_date.isnot(None)
         )
     ).options(
@@ -636,7 +904,7 @@ async def create_teacher(
     return {
         "id": str(new_teacher.id),
         "name": format_teacher_name(new_teacher),
-        "status": "INACTIVE",
+        "status": "INACTIVE",  # Will become ACTIVE when assigned to classes
         "campus": {
             "id": str(campus.id),
             "name": campus.name
@@ -806,85 +1074,36 @@ async def create_assignment(
                 }
             )
     
-    # Get class
-    class_result = await db.execute(
-        select(Class).where(
-            Class.id == assignment_data.class_id,
-            Class.campus.school_id == current_user.school_id
-        ).options(
-            selectinload(Class.campus),
-            selectinload(Class.academic_year)
-        )
+    # Load teacher with campus relationship for validation
+    await db.refresh(teacher, ["campus"])
+    
+    # Use helper function to create assignments
+    created_assignments, conflicts = await create_teacher_assignments(
+        teacher,
+        assignment_data,
+        current_user,
+        db
     )
-    class_obj = class_result.scalar_one_or_none()
     
-    if not class_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error_code": "CLASS_NOT_FOUND",
-                "message": "Class not found",
-                "recovery": "Verify the class ID"
-            }
-        )
-    
-    # Validate campus match
-    await validate_campus_match(teacher, class_obj, db)
-    
-    # Validate active class
-    await validate_active_class(assignment_data.class_id, db)
-    
-    # Validate all subjects belong to class
-    for subject_id in assignment_data.subject_ids:
-        await validate_subject_class_compatibility(subject_id, assignment_data.class_id, db)
-    
-    # Check for duplicate assignments
-    start_date = assignment_data.start_date or date.today()
-    
-    existing_assignments_result = await db.execute(
-        select(TeacherClassAssignment).where(
-            TeacherClassAssignment.teacher_id == teacher_id,
-            TeacherClassAssignment.class_id == assignment_data.class_id,
-            TeacherClassAssignment.subject_id.in_(assignment_data.subject_ids),
-            TeacherClassAssignment.end_date.is_(None)
-        )
-    )
-    existing_assignments = existing_assignments_result.scalars().all()
-    
-    if existing_assignments:
-        # Get subject names for error
-        subject_ids_in_conflict = [a.subject_id for a in existing_assignments]
-        subjects_result = await db.execute(
-            select(Subject).where(Subject.id.in_(subject_ids_in_conflict))
-        )
-        subjects = subjects_result.scalars().all()
-        subject_names = [s.name for s in subjects]
+    # If conflicts exist and override was not requested, return conflict error
+    if conflicts and not assignment_data.override_conflicts:
+        conflict_details = []
+        for conflict in conflicts:
+            conflict_details.append({
+                "class_name": conflict["class_name"],
+                "subject_id": str(conflict["subject_id"]),
+                "existing_teacher_name": conflict["existing_teacher_name"]
+            })
         
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "error_code": "DUPLICATE_ASSIGNMENT",
-                "message": f"Teacher is already assigned to teach {', '.join(subject_names)} in {class_obj.name}",
-                "recovery": "This assignment already exists"
+                "error_code": "ASSIGNMENT_CONFLICTS",
+                "message": "Other teachers are already assigned to some of these class/subject combinations",
+                "recovery": "Set override_conflicts=true to replace existing assignments, or choose different classes/subjects",
+                "conflicts": conflict_details
             }
         )
-    
-    # Create assignments (one per subject)
-    created_assignments = []
-    for subject_id in assignment_data.subject_ids:
-        new_assignment = TeacherClassAssignment(
-            teacher_id=teacher_id,
-            class_id=assignment_data.class_id,
-            subject_id=subject_id,
-            campus_id=teacher.campus_id,  # Denormalized for constraint enforcement
-            start_date=start_date,
-            end_date=None,  # Active assignment
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-        )
-        db.add(new_assignment)
-        await db.flush()
-        created_assignments.append(new_assignment)
     
     await db.commit()
     
@@ -892,8 +1111,8 @@ async def create_assignment(
     for assignment in created_assignments:
         await db.refresh(assignment, ["class_", "subject"])
     
-    # Compute updated teacher status
-    updated_status, _ = await compute_teacher_status(teacher_id, db)
+    # Compute updated teacher status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    updated_status, _ = await compute_teacher_status(teacher.user_id, db)
     
     # Build response
     assignments_response = []
@@ -933,6 +1152,82 @@ async def create_assignment(
         assignments=assignments_response,
         teacher_status=updated_status
     )
+
+
+# ============================================================================
+# Check Assignment Conflicts
+# ============================================================================
+
+@router.post("/teachers/{teacher_id}/assignments/check-conflicts", response_model=dict)
+async def check_assignment_conflicts(
+    teacher_id: UUID,
+    assignment_data: TeacherAssignmentCreate,
+    current_user: User = Depends(require_campus_admin),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Check for conflicts before creating assignments.
+    
+    Returns list of conflicts if any exist.
+    Permission: SCHOOL_ADMIN, CAMPUS_ADMIN (if teacher in their campus)
+    """
+    # Get teacher
+    teacher_result = await db.execute(
+        select(Teacher).where(
+            Teacher.id == teacher_id,
+            Teacher.school_id == current_user.school_id
+        ).options(
+            selectinload(Teacher.campus)
+        )
+    )
+    teacher = teacher_result.scalar_one_or_none()
+    
+    if not teacher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "TEACHER_NOT_FOUND",
+                "message": "Teacher not found",
+                "recovery": "Verify the teacher ID"
+            }
+        )
+    
+    # Campus scoping for CAMPUS_ADMIN
+    if current_user.role == "CAMPUS_ADMIN" and current_user.campus_id:
+        if teacher.campus_id != current_user.campus_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "FORBIDDEN_ACTION",
+                    "message": "You can only manage teachers in your campus",
+                    "recovery": "This teacher belongs to a different campus"
+                }
+            )
+    
+    # Load teacher with campus relationship
+    await db.refresh(teacher, ["campus"])
+    
+    # Use helper function to check for conflicts (without creating)
+    # Create a temporary assignment data with override=False to get conflicts
+    check_data = TeacherAssignmentCreate(
+        class_ids=assignment_data.class_ids,
+        subject_ids=assignment_data.subject_ids,
+        start_date=assignment_data.start_date,
+        end_date=assignment_data.end_date,
+        override_conflicts=False
+    )
+    
+    _, conflicts = await create_teacher_assignments(
+        teacher,
+        check_data,
+        current_user,
+        db
+    )
+    
+    return {
+        "has_conflicts": len(conflicts) > 0,
+        "conflicts": conflicts if conflicts else []
+    }
 
 
 # ============================================================================
@@ -1022,10 +1317,10 @@ async def create_bulk_assignments(
             await validate_subject_class_compatibility(subject_id, assignment_item.class_id, db)
             all_subject_ids.append((assignment_item.class_id, subject_id))
     
-    # Check for duplicates
+    # Check for duplicates (use user_id because TeacherClassAssignment.teacher_id references user.id)
     existing_assignments_result = await db.execute(
         select(TeacherClassAssignment).where(
-            TeacherClassAssignment.teacher_id == teacher_id,
+            TeacherClassAssignment.teacher_id == teacher.user_id,
             TeacherClassAssignment.end_date.is_(None)
         )
     )
@@ -1064,12 +1359,12 @@ async def create_bulk_assignments(
             }
         )
     
-    # Create all assignments
+    # Create all assignments (use user_id because TeacherClassAssignment.teacher_id references user.id)
     created_assignments = []
     for assignment_item in bulk_data.assignments:
         for subject_id in assignment_item.subject_ids:
             new_assignment = TeacherClassAssignment(
-                teacher_id=teacher_id,
+                teacher_id=teacher.user_id,  # Use user_id, not teacher.id (FK references user.id)
                 class_id=assignment_item.class_id,
                 subject_id=subject_id,
                 campus_id=teacher.campus_id,
@@ -1088,8 +1383,8 @@ async def create_bulk_assignments(
     for assignment in created_assignments:
         await db.refresh(assignment, ["class_", "subject"])
     
-    # Compute updated status
-    updated_status, _ = await compute_teacher_status(teacher_id, db)
+    # Compute updated status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    updated_status, _ = await compute_teacher_status(teacher.user_id, db)
     
     # Build response (group by class)
     assignments_by_class: dict[UUID, dict] = {}
@@ -1195,11 +1490,11 @@ async def remove_assignment(
                 }
             )
     
-    # Get assignment
+    # Get assignment (use user_id because TeacherClassAssignment.teacher_id references user.id)
     assignment_result = await db.execute(
         select(TeacherClassAssignment).where(
             TeacherClassAssignment.id == assignment_id,
-            TeacherClassAssignment.teacher_id == teacher_id,
+            TeacherClassAssignment.teacher_id == teacher.user_id,
             TeacherClassAssignment.end_date.is_(None)  # Only active assignments
         )
     )
@@ -1222,11 +1517,106 @@ async def remove_assignment(
     
     await db.commit()
     
-    # Recompute teacher status
-    updated_status, _ = await compute_teacher_status(teacher_id, db)
+    # Recompute teacher status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    updated_status, _ = await compute_teacher_status(teacher.user_id, db)
     
     return AssignmentRemoveResponse(
         id=assignment.id,
         end_date=end_date,
         teacher_status=updated_status
     )
+
+
+# ============================================================================
+# Update Assignment End Date
+# ============================================================================
+
+@router.put("/teachers/{teacher_id}/assignments/{assignment_id}/end-date", response_model=dict)
+async def update_assignment_end_date(
+    teacher_id: UUID,
+    assignment_id: UUID,
+    end_date: Optional[date] = Query(None, description="New end date for the assignment (null to keep active)"),
+    current_user: User = Depends(require_campus_admin),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Update the end date of an active assignment.
+    
+    Permission: SCHOOL_ADMIN, CAMPUS_ADMIN (if teacher in their campus)
+    """
+    # Get teacher
+    teacher_result = await db.execute(
+        select(Teacher).where(
+            Teacher.id == teacher_id,
+            Teacher.school_id == current_user.school_id
+        )
+    )
+    teacher = teacher_result.scalar_one_or_none()
+    
+    if not teacher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "TEACHER_NOT_FOUND",
+                "message": "Teacher not found",
+                "recovery": "Verify the teacher ID"
+            }
+        )
+    
+    # Campus scoping for CAMPUS_ADMIN
+    if current_user.role == "CAMPUS_ADMIN" and current_user.campus_id:
+        if teacher.campus_id != current_user.campus_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error_code": "FORBIDDEN_ACTION",
+                    "message": "You can only manage teachers in your campus",
+                    "recovery": "This teacher belongs to a different campus"
+                }
+            )
+    
+    # Get assignment (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    assignment_result = await db.execute(
+        select(TeacherClassAssignment).where(
+            TeacherClassAssignment.id == assignment_id,
+            TeacherClassAssignment.teacher_id == teacher.user_id,
+            TeacherClassAssignment.end_date.is_(None)  # Only active assignments
+        )
+    )
+    assignment = assignment_result.scalar_one_or_none()
+    
+    if not assignment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "ASSIGNMENT_NOT_FOUND",
+                "message": "Assignment not found or already ended",
+                "recovery": "Verify the assignment ID"
+            }
+        )
+    
+    # Validate end_date is after start_date (if provided)
+    if end_date and end_date < assignment.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "INVALID_END_DATE",
+                "message": "End date must be after start date",
+                "recovery": "Select an end date after the assignment start date"
+            }
+        )
+    
+    # Update end_date (can be None to keep assignment active)
+    assignment.end_date = end_date
+    assignment.updated_at = datetime.now(UTC)
+    
+    await db.commit()
+    
+    # Recompute teacher status (use user_id because TeacherClassAssignment.teacher_id references user.id)
+    updated_status, _ = await compute_teacher_status(teacher.user_id, db)
+    
+    return {
+        "id": str(assignment.id),
+        "end_date": end_date.isoformat() if end_date else None,
+        "teacher_status": updated_status
+    }

@@ -105,10 +105,25 @@ export interface TeacherListResponse {
   }
 }
 
-export interface TeacherAssignmentCreate {
+export interface ConflictInfo {
   class_id: string
+  class_name: string
+  subject_id: string
+  subject_name: string
+  existing_teacher_id: string
+  existing_teacher_name: string
+  existing_start_date: string
+  existing_end_date: string | null
+  new_start_date: string
+  new_end_date: string | null
+}
+
+export interface TeacherAssignmentCreate {
+  class_ids: string[]
   subject_ids: string[]
-  start_date?: string
+  start_date: string
+  end_date?: string | null
+  override_conflicts?: boolean
 }
 
 export interface TeacherAssignmentBulkCreate {
@@ -172,6 +187,22 @@ export const teachersApi = {
 
   removeAssignment: async (teacherId: string, assignmentId: string): Promise<AssignmentRemoveResponse> => {
     const response = await apiClient.delete<AssignmentRemoveResponse>(`/teachers/${teacherId}/assignments/${assignmentId}`)
+    return response.data
+  },
+
+  checkConflicts: async (teacherId: string, data: TeacherAssignmentCreate): Promise<{has_conflicts: boolean, conflicts: ConflictInfo[]}> => {
+    const response = await apiClient.post<{has_conflicts: boolean, conflicts: ConflictInfo[]}>(`/teachers/${teacherId}/assignments/check-conflicts`, data)
+    return response.data
+  },
+
+  updateAssignmentEndDate: async (teacherId: string, assignmentId: string, endDate: string | null): Promise<{id: string, end_date: string | null, teacher_status: string}> => {
+    const params: { end_date?: string } = {}
+    if (endDate) {
+      params.end_date = endDate
+    }
+    const response = await apiClient.put<{id: string, end_date: string | null, teacher_status: string}>(`/teachers/${teacherId}/assignments/${assignmentId}/end-date`, null, {
+      params
+    })
     return response.data
   },
 }
