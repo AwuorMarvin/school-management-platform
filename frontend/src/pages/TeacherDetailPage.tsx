@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
 import StatusBadge from '../components/StatusBadge'
+import TeacherAssignmentModal from '../components/TeacherAssignmentModal'
 import { teachersApi, Teacher, TeacherAssignment } from '../api/teachers'
 import { useAuthStore } from '../store/authStore'
 import { Phone, Mail, Calendar, User, MapPin, Hash, GraduationCap } from 'lucide-react'
@@ -12,13 +13,15 @@ import { Phone, Mail, Calendar, User, MapPin, Hash, GraduationCap } from 'lucide
 const TeacherDetailPage = () => {
   const { id } = useParams<{ id: string }>()
   const { user } = useAuthStore()
-  const navigate = useNavigate()
   
   const [teacher, setTeacher] = useState<Teacher | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showHistory, setShowHistory] = useState(false)
   const [removingAssignment, setRemovingAssignment] = useState<string | null>(null)
+  const [assignmentModalOpen, setAssignmentModalOpen] = useState(false)
+  const [adjustModalOpen, setAdjustModalOpen] = useState(false)
+  const [adjustingAssignment, setAdjustingAssignment] = useState<TeacherAssignment | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -225,7 +228,7 @@ const TeacherDetailPage = () => {
                 <h2 className="text-lg font-semibold text-gray-900">Current Assignments</h2>
                 {isAdmin && (
                   <button
-                    onClick={() => navigate(`/teachers/${id}/assignments/new`)}
+                    onClick={() => setAssignmentModalOpen(true)}
                     className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium"
                   >
                     Add Assignment
@@ -237,7 +240,7 @@ const TeacherDetailPage = () => {
                   <p className="text-gray-600">No active assignments</p>
                   {isAdmin && (
                     <button
-                      onClick={() => navigate(`/teachers/${id}/assignments/new`)}
+                      onClick={() => setAssignmentModalOpen(true)}
                       className="mt-4 px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
                     >
                       Add First Assignment
@@ -293,13 +296,24 @@ const TeacherDetailPage = () => {
                           </td>
                           {isAdmin && (
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                              <button
-                                onClick={() => handleRemoveAssignment(assignment.id)}
-                                disabled={removingAssignment === assignment.id}
-                                className="text-red-600 hover:text-red-900 disabled:opacity-50"
-                              >
-                                {removingAssignment === assignment.id ? 'Removing...' : 'Remove'}
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => {
+                                    setAdjustingAssignment(assignment)
+                                    setAdjustModalOpen(true)
+                                  }}
+                                  className="text-primary-600 hover:text-primary-900"
+                                >
+                                  Adjust
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveAssignment(assignment.id)}
+                                  disabled={removingAssignment === assignment.id}
+                                  className="text-red-600 hover:text-red-900 disabled:opacity-50"
+                                >
+                                  {removingAssignment === assignment.id ? 'Removing...' : 'Remove'}
+                                </button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -402,6 +416,42 @@ const TeacherDetailPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Add Assignment Modal */}
+      {teacher && (
+        <TeacherAssignmentModal
+          isOpen={assignmentModalOpen}
+          onClose={() => setAssignmentModalOpen(false)}
+          teacherId={teacher.id}
+          teacherName={`${teacher.salutation} ${teacher.first_name} ${teacher.middle_name || ''} ${teacher.last_name}`.trim()}
+          teacherCampusId={teacher.campus.id}
+          onAssignmentSuccess={() => {
+            loadTeacher()
+            setAssignmentModalOpen(false)
+          }}
+        />
+      )}
+
+      {/* Adjust Assignment Modal */}
+      {teacher && adjustingAssignment && (
+        <TeacherAssignmentModal
+          isOpen={adjustModalOpen}
+          onClose={() => {
+            setAdjustModalOpen(false)
+            setAdjustingAssignment(null)
+          }}
+          teacherId={teacher.id}
+          teacherName={`${teacher.salutation} ${teacher.first_name} ${teacher.middle_name || ''} ${teacher.last_name}`.trim()}
+          teacherCampusId={teacher.campus.id}
+          mode="adjust"
+          assignment={adjustingAssignment}
+          onAssignmentSuccess={() => {
+            loadTeacher()
+            setAdjustModalOpen(false)
+            setAdjustingAssignment(null)
+          }}
+        />
+      )}
     </AppLayout>
   )
 }
