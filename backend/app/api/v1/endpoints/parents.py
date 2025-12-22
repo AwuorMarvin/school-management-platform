@@ -7,7 +7,7 @@ from uuid import UUID
 from datetime import datetime, timedelta, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,11 @@ from app.models.user import User
 from app.models.parent import Parent
 from app.models.student import Student
 from app.models.student_parent import StudentParent
+from app.models.teacher import Teacher
+from app.models.teacher_class_assignment import TeacherClassAssignment
+from app.models.student_class_history import StudentClassHistory
+from app.models import Class
+from app.models.subject import Subject
 from app.models.account_setup_token import AccountSetupToken
 from app.schemas.parent import (
     ParentCreate,
@@ -514,4 +519,358 @@ async def get_parent_students(
         }
         for link in links
     ]
+
+
+# ============================================================================
+# Get Teachers for Specific Child
+# ============================================================================
+
+@router.get("/parents/me/children/{child_id}/teachers", response_model=dict)
+async def get_child_teachers(
+    child_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Get teachers teaching a specific child.
+    
+    Returns only teachers assigned to child's current class.
+    Subjects filtered to only those taught in child's class.
+    
+    Permission: PARENT (must be linked to this child)
+    """
+    if current_user.role != "PARENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "FORBIDDEN_ACTION",
+                "message": "Only parents can access this endpoint",
+                "recovery": "This endpoint is for parents only"
+            }
+        )
+    
+    # Get parent record
+    parent_result = await db.execute(
+        select(Parent).where(Parent.user_id == current_user.id)
+    )
+    parent = parent_result.scalar_one_or_none()
+    
+    if not parent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PARENT_NOT_FOUND",
+                "message": "Parent record not found",
+                "recovery": "Contact administrator"
+            }
+        )
+    
+    # Verify child belongs to this parent
+    link_result = await db.execute(
+        select(StudentParent).where(
+            StudentParent.student_id == child_id,
+            StudentParent.parent_id == parent.id
+        )
+    )
+    link = link_result.scalar_one_or_none()
+    
+    if not link:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "FORBIDDEN_ACTION",
+                "message": "This child is not linked to your account",
+                "recovery": "You can only view teachers for your own children"
+            }
+        )
+    
+    # Get child's current class
+    class_history_result = await db.execute(
+        select(StudentClassHistory).where(
+            StudentClassHistory.student_id == child_id,
+            StudentClassHistory.end_date.is_(None)
+        ).options(
+            selectinload(StudentClassHistory.class_)
+        )
+    )
+    class_history = class_history_result.scalar_one_or_none()
+    
+    if not class_history:
+        # Child not assigned to any class
+        return {
+            "child": {
+                "id": str(child_id),
+                "name": f"{link.student.first_name} {link.student.last_name}",
+                "class": None
+            },
+            "teachers": []
+        }
+    
+    current_class = class_history.class_
+    
+    # Get student info
+    student_result = await db.execute(
+        select(Student).where(Student.id == child_id)
+    )
+    student = student_result.scalar_one()
+    
+    # Get all teachers assigned to this class (active assignments only)
+    assignments_result = await db.execute(
+        select(TeacherClassAssignment).where(
+            and_(
+                TeacherClassAssignment.class_id == current_class.id,
+                TeacherClassAssignment.end_date.is_(None)
+            )
+        ).options(
+            selectinload(TeacherClassAssignment.teacher).selectinload(User.teacher),
+            selectinload(TeacherClassAssignment.subject)
+        )
+    )
+    assignments = assignments_result.scalars().all()
+    
+    # Group by teacher
+    teachers_dict: dict[UUID, dict] = {}
+    for assignment in assignments:
+        teacher_id = assignment.teacher_id
+        
+        if teacher_id not in teachers_dict:
+            # Get teacher record
+            teacher_result = await db.execute(
+                select(Teacher).where(Teacher.user_id == teacher_id)
+            )
+            teacher = teacher_result.scalar_one_or_none()
+            
+            if not teacher:
+                continue  # Skip if teacher record not found
+            
+            # Format teacher name
+            name_parts = [teacher.salutation, teacher.first_name]
+            if teacher.middle_name:
+                name_parts.append(teacher.middle_name)
+            name_parts.append(teacher.last_name)
+            teacher_name = " ".join(name_parts)
+            
+            # Count students in class
+            student_count_result = await db.execute(
+                select(func.count(Student.id)).select_from(
+                    Student
+                ).join(
+                    StudentClassHistory,
+                    and_(
+                        Student.id == StudentClassHistory.student_id,
+                        StudentClassHistory.class_id == current_class.id,
+                        StudentClassHistory.end_date.is_(None),
+                        Student.status == "ACTIVE"
+                    )
+                )
+            )
+            student_count = student_count_result.scalar_one() or 0
+            
+            teachers_dict[teacher_id] = {
+                "id": str(teacher.id),
+                "name": teacher_name,
+                "phone_number": assignment.teacher.phone_number,
+                "subjects": [],
+                "students_in_class": student_count
+            }
+        
+        # Add subject (only subjects taught in this class)
+        teachers_dict[teacher_id]["subjects"].append({
+            "id": str(assignment.subject.id),
+            "name": assignment.subject.name
+        })
+    
+    # Convert to list and sort by name
+    teachers_list = list(teachers_dict.values())
+    teachers_list.sort(key=lambda t: t["name"])
+    
+    # Remove duplicate subjects per teacher
+    for teacher in teachers_list:
+        seen_subjects = set()
+        unique_subjects = []
+        for subject in teacher["subjects"]:
+            if subject["id"] not in seen_subjects:
+                seen_subjects.add(subject["id"])
+                unique_subjects.append(subject)
+        teacher["subjects"] = unique_subjects
+    
+    return {
+        "child": {
+            "id": str(child_id),
+            "name": f"{student.first_name} {student.last_name}",
+            "class": {
+                "id": str(current_class.id),
+                "name": current_class.name
+            }
+        },
+        "teachers": teachers_list
+    }
+
+
+# ============================================================================
+# Get All Teachers for All Children
+# ============================================================================
+
+@router.get("/parents/me/teachers", response_model=dict)
+async def get_all_teachers(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Get all teachers teaching any of parent's children.
+    
+    Grouped by child. Each child section shows teachers for that child's class.
+    
+    Permission: PARENT
+    """
+    if current_user.role != "PARENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "FORBIDDEN_ACTION",
+                "message": "Only parents can access this endpoint",
+                "recovery": "This endpoint is for parents only"
+            }
+        )
+    
+    # Get parent record
+    parent_result = await db.execute(
+        select(Parent).where(Parent.user_id == current_user.id)
+    )
+    parent = parent_result.scalar_one_or_none()
+    
+    if not parent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PARENT_NOT_FOUND",
+                "message": "Parent record not found",
+                "recovery": "Contact administrator"
+            }
+        )
+    
+    # Get all children linked to this parent
+    links_result = await db.execute(
+        select(StudentParent).where(
+            StudentParent.parent_id == parent.id
+        ).options(
+            selectinload(StudentParent.student)
+        )
+    )
+    links = links_result.scalars().all()
+    
+    children_data = []
+    
+    for link in links:
+        child_id = link.student_id
+        student = link.student
+        
+        # Get child's current class
+        class_history_result = await db.execute(
+            select(StudentClassHistory).where(
+                StudentClassHistory.student_id == child_id,
+                StudentClassHistory.end_date.is_(None)
+            ).options(
+                selectinload(StudentClassHistory.class_)
+            )
+        )
+        class_history = class_history_result.scalar_one_or_none()
+        
+        if not class_history:
+            # Child not in any class - skip
+            continue
+        
+        current_class = class_history.class_
+        
+        # Get teachers for this class
+        assignments_result = await db.execute(
+            select(TeacherClassAssignment).where(
+                and_(
+                    TeacherClassAssignment.class_id == current_class.id,
+                    TeacherClassAssignment.end_date.is_(None)
+                )
+            ).options(
+                selectinload(TeacherClassAssignment.teacher).selectinload(User.teacher),
+                selectinload(TeacherClassAssignment.subject)
+            )
+        )
+        assignments = assignments_result.scalars().all()
+        
+        # Group by teacher
+        teachers_dict: dict[UUID, dict] = {}
+        for assignment in assignments:
+            teacher_id = assignment.teacher_id
+            
+            if teacher_id not in teachers_dict:
+                teacher_result = await db.execute(
+                    select(Teacher).where(Teacher.user_id == teacher_id)
+                )
+                teacher = teacher_result.scalar_one_or_none()
+                
+                if not teacher:
+                    continue
+                
+                name_parts = [teacher.salutation, teacher.first_name]
+                if teacher.middle_name:
+                    name_parts.append(teacher.middle_name)
+                name_parts.append(teacher.last_name)
+                teacher_name = " ".join(name_parts)
+                
+                # Count students in class
+                student_count_result = await db.execute(
+                    select(func.count(Student.id)).select_from(
+                        Student
+                    ).join(
+                        StudentClassHistory,
+                        and_(
+                            Student.id == StudentClassHistory.student_id,
+                            StudentClassHistory.class_id == current_class.id,
+                            StudentClassHistory.end_date.is_(None),
+                            Student.status == "ACTIVE"
+                        )
+                    )
+                )
+                student_count = student_count_result.scalar_one() or 0
+                
+                teachers_dict[teacher_id] = {
+                    "id": str(teacher.id),
+                    "name": teacher_name,
+                    "phone_number": assignment.teacher.phone_number,
+                    "subjects": [],
+                    "students_in_class": student_count
+                }
+            
+            teachers_dict[teacher_id]["subjects"].append({
+                "id": str(assignment.subject.id),
+                "name": assignment.subject.name
+            })
+        
+        # Convert to list and deduplicate subjects
+        teachers_list = list(teachers_dict.values())
+        teachers_list.sort(key=lambda t: t["name"])
+        
+        for teacher in teachers_list:
+            seen_subjects = set()
+            unique_subjects = []
+            for subject in teacher["subjects"]:
+                if subject["id"] not in seen_subjects:
+                    seen_subjects.add(subject["id"])
+                    unique_subjects.append(subject)
+            teacher["subjects"] = unique_subjects
+        
+        children_data.append({
+            "child": {
+                "id": str(child_id),
+                "name": f"{student.first_name} {student.last_name}",
+                "class": {
+                    "id": str(current_class.id),
+                    "name": current_class.name
+                }
+            },
+            "teachers": teachers_list
+        })
+    
+    return {
+        "children": children_data
+    }
 

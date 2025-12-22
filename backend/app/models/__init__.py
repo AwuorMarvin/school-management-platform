@@ -14,6 +14,7 @@ from app.models.campus import Campus
 # User models
 from app.models.user import User
 from app.models.parent import Parent
+from app.models.teacher import Teacher
 
 # Student models
 from app.models.student import Student
@@ -85,6 +86,7 @@ __all__ = [
     "Campus",
     "User",
     "Parent",
+    "Teacher",
     "Student",
     "StudentParent",
     # Academic
