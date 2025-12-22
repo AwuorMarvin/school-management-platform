@@ -7,12 +7,12 @@ from uuid import UUID
 from datetime import datetime, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_campus_admin
+from app.core.deps import get_current_user
 from app.models.student import Student
 from app.models.student_performance import StudentPerformance
 from app.models.student_term_comment import StudentTermComment
@@ -24,15 +24,387 @@ from app.models.teacher_class_assignment import TeacherClassAssignment
 from app.schemas.performance import (
     PerformanceEntry,
     TermCommentEntry,
-    PerformanceResponse,
     PerformanceListResponse,
-    PerformanceListItem,
     TermCommentResponse,
+    PerformanceReportCreate,
+    PerformanceReportUpdate,
+    PerformanceReportResponse,
+    PerformanceReportListResponse,
+    PerformanceReportListItem,
+)
+from app.services.performance_service import (
+    create_performance_report,
+    get_performance_report,
+    list_performance_reports,
+    soft_delete_performance_report,
+    update_performance_report,
+    PerformancePermissionError,
+    PerformanceNotFoundError,
 )
 
 router = APIRouter()
 
 
+# ============================================================================
+# New Performance Report Endpoints (/performance)
+# ============================================================================
+
+
+@router.get("/performance", response_model=PerformanceReportListResponse)
+async def list_reports(
+    academic_year_id: Optional[UUID] = Query(None, description="Filter by academic year"),
+    term_id: Optional[UUID] = Query(None, description="Filter by term"),
+    subject_id: Optional[UUID] = Query(None, description="Filter by subject"),
+    student_id: Optional[UUID] = Query(None, description="Filter by student"),
+    class_id: Optional[UUID] = Query(None, description="Filter by class"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PerformanceReportListResponse:
+    """
+    List performance reports with filters.
+
+    Permissions:
+    - Campus/School/Super admins: all reports in school.
+    - Teacher: only reports where they are the teacher.
+    - Parent: only reports for their children.
+    """
+    rows, total = await list_performance_reports(
+        db=db,
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+        term_id=term_id,
+        subject_id=subject_id,
+        student_id=student_id,
+        class_id=class_id,
+        page=page,
+        page_size=page_size,
+    )
+
+    items: list[PerformanceReportListItem] = []
+    for (
+        report,
+        student,
+        cls,
+        subject,
+        academic_year,
+        term,
+        teacher,
+        first_numeric_score,
+        first_descriptive_score,
+        item_count,
+    ) in rows:
+        items.append(
+            PerformanceReportListItem(
+                id=report.id,
+                student={
+                    "id": student.id,
+                    "first_name": student.first_name,
+                    "last_name": student.last_name,
+                },
+                cls={
+                    "id": cls.id,
+                    "name": cls.name,
+                },
+                subject={
+                    "id": subject.id,
+                    "name": subject.name,
+                },
+                teacher={
+                    "id": teacher.id,
+                    "first_name": teacher.first_name,
+                    "last_name": teacher.last_name,
+                },
+                academic_year={
+                    "id": academic_year.id,
+                    "name": academic_year.name,
+                },
+                term={
+                    "id": term.id,
+                    "name": term.name,
+                },
+                line_items_count=int(item_count or 0),
+                first_numeric_score=float(first_numeric_score)
+                if first_numeric_score is not None
+                else None,
+                first_descriptive_score=first_descriptive_score,
+                created_at=report.created_at.isoformat(),
+                updated_at=report.updated_at.isoformat() if report.updated_at else None,
+            )
+        )
+
+    return PerformanceReportListResponse(
+        data=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/performance",
+    response_model=PerformanceReportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_report(
+    payload: PerformanceReportCreate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PerformanceReportResponse:
+    """
+    Create a new performance report with up to 5 line items.
+
+    Permissions:
+    - Teacher: can create for students in their classes and subjects they teach.
+    - Campus/School/Super admins: can create for any student in school; report is still tied to the actual teacher.
+    - Parent: not allowed.
+    """
+    if current_user.role == "PARENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PERMISSION_DENIED",
+                "message": "Parents cannot create performance reports",
+                "recovery": "Log in as a teacher or administrator to create reports",
+            },
+        )
+
+    try:
+        report = await create_performance_report(
+            db=db,
+            current_user=current_user,
+            data=payload,
+        )
+    except PerformancePermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PERMISSION_DENIED",
+                "message": str(exc),
+                "recovery": "Check teacher/class/subject assignments",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "INVALID_PERFORMANCE_DATA",
+                "message": str(exc),
+                "recovery": "Verify the selected student, class, subject, term and academic year",
+            },
+        ) from exc
+
+    return PerformanceReportResponse(
+        id=report.id,
+        student_id=report.student_id,
+        class_id=report.class_id,
+        subject_id=report.subject_id,
+        academic_year_id=report.academic_year_id,
+        term_id=report.term_id,
+        teacher_id=report.teacher_id,
+        created_by_user_id=report.created_by_user_id,
+        updated_by_user_id=report.updated_by_user_id,
+        created_at=report.created_at.isoformat(),
+        updated_at=report.updated_at.isoformat() if report.updated_at else None,
+        is_deleted=report.is_deleted,
+        line_items=[
+            {
+                "id": item.id,
+                "area_label": item.area_label,
+                "numeric_score": float(item.numeric_score) if item.numeric_score is not None else None,
+                "descriptive_score": item.descriptive_score,
+                "comment": item.comment,
+                "position": item.position,
+            }
+            for item in sorted(report.line_items, key=lambda li: li.position)
+        ],
+    )
+
+
+@router.get(
+    "/performance/{report_id}",
+    response_model=PerformanceReportResponse,
+)
+async def get_report(
+    report_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PerformanceReportResponse:
+    """Get a single performance report by ID with full details."""
+    try:
+        report = await get_performance_report(
+            db=db,
+            report_id=report_id,
+            current_user=current_user,
+        )
+    except PerformancePermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PERMISSION_DENIED",
+                "message": str(exc),
+                "recovery": "You may only view performance for authorized students",
+            },
+        ) from exc
+    except PerformanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PERFORMANCE_NOT_FOUND",
+                "message": str(exc),
+                "recovery": "Verify the report ID",
+            },
+        ) from exc
+
+    return PerformanceReportResponse(
+        id=report.id,
+        student_id=report.student_id,
+        class_id=report.class_id,
+        subject_id=report.subject_id,
+        academic_year_id=report.academic_year_id,
+        term_id=report.term_id,
+        teacher_id=report.teacher_id,
+        created_by_user_id=report.created_by_user_id,
+        updated_by_user_id=report.updated_by_user_id,
+        created_at=report.created_at.isoformat(),
+        updated_at=report.updated_at.isoformat() if report.updated_at else None,
+        is_deleted=report.is_deleted,
+        line_items=[
+            {
+                "id": item.id,
+                "area_label": item.area_label,
+                "numeric_score": float(item.numeric_score) if item.numeric_score is not None else None,
+                "descriptive_score": item.descriptive_score,
+                "comment": item.comment,
+                "position": item.position,
+            }
+            for item in sorted(report.line_items, key=lambda li: li.position)
+        ],
+    )
+
+
+@router.put(
+    "/performance/{report_id}",
+    response_model=PerformanceReportResponse,
+)
+async def update_report(
+    report_id: UUID,
+    payload: PerformanceReportUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PerformanceReportResponse:
+    """
+    Update an existing performance report (line items replaced as a set).
+
+    Permissions:
+    - Teacher: can only update their own reports.
+    - Campus/School/Super admins: can update any report in school.
+    - Parent: not allowed.
+    """
+    try:
+        report = await update_performance_report(
+            db=db,
+            report_id=report_id,
+            current_user=current_user,
+            data=payload,
+        )
+    except PerformancePermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PERMISSION_DENIED",
+                "message": str(exc),
+                "recovery": "You may only edit reports that you own or administer",
+            },
+        ) from exc
+    except PerformanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PERFORMANCE_NOT_FOUND",
+                "message": str(exc),
+                "recovery": "Verify the report ID",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "INVALID_PERFORMANCE_DATA",
+                "message": str(exc),
+                "recovery": "Fix validation errors on line items and try again",
+            },
+        ) from exc
+
+    return PerformanceReportResponse(
+        id=report.id,
+        student_id=report.student_id,
+        class_id=report.class_id,
+        subject_id=report.subject_id,
+        academic_year_id=report.academic_year_id,
+        term_id=report.term_id,
+        teacher_id=report.teacher_id,
+        created_by_user_id=report.created_by_user_id,
+        updated_by_user_id=report.updated_by_user_id,
+        created_at=report.created_at.isoformat(),
+        updated_at=report.updated_at.isoformat() if report.updated_at else None,
+        is_deleted=report.is_deleted,
+        line_items=[
+            {
+                "id": item.id,
+                "area_label": item.area_label,
+                "numeric_score": float(item.numeric_score) if item.numeric_score is not None else None,
+                "descriptive_score": item.descriptive_score,
+                "comment": item.comment,
+                "position": item.position,
+            }
+            for item in sorted(report.line_items, key=lambda li: li.position)
+        ],
+    )
+
+
+@router.delete(
+    "/performance/{report_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_report(
+    report_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Soft delete a performance report.
+
+    Permissions:
+    - Teacher: can delete their own reports.
+    - Campus/School/Super admins: can delete any report in school.
+    - Parent: not allowed.
+    """
+    try:
+        await soft_delete_performance_report(
+            db=db,
+            report_id=report_id,
+            current_user=current_user,
+        )
+    except PerformancePermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "PERMISSION_DENIED",
+                "message": str(exc),
+                "recovery": "You may only delete reports that you own or administer",
+            },
+        ) from exc
+    except PerformanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error_code": "PERFORMANCE_NOT_FOUND",
+                "message": str(exc),
+                "recovery": "Verify the report ID",
+            },
+        ) from exc
 # ============================================================================
 # Enter/Update Subject Performance
 # ============================================================================

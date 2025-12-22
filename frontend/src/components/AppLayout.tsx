@@ -55,6 +55,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
         { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { path: '/fee-status', label: 'Fee Status', icon: DollarSign },
         { path: '/fee-structures', label: 'Fee Structures', icon: ClipboardList },
+        { path: '/performance', label: 'Performance', icon: ClipboardList },
         { path: '/announcements', label: 'Announcements', icon: Megaphone },
         { path: '/notice-board', label: 'Notice Board', icon: FileText },
       ]
@@ -65,6 +66,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
         { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { path: '/fee-status', label: 'Fee Status', icon: DollarSign },
         { path: '/fee-structures', label: 'Fee Structures', icon: ClipboardList },
+        { path: '/performance', label: 'Performance', icon: ClipboardList },
         { path: '/announcements', label: 'Announcements', icon: Megaphone },
         { path: '/notice-board', label: 'Notice Board', icon: FileText },
       ]
@@ -75,6 +77,7 @@ const AppLayout = ({ children }: AppLayoutProps) => {
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { path: '/students', label: 'Students', icon: Users },
       { path: '/parents', label: 'Parents', icon: UserCircle2 },
+      { path: '/performance', label: 'Performance', icon: ClipboardList },
       { path: '/fee-status', label: 'Fee Status', icon: DollarSign },
       { path: '/fee-structures', label: 'Fee Structures', icon: ClipboardList },
       { path: '/academic-years', label: 'Academic Years', icon: Calendar },

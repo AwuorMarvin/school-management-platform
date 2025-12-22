@@ -18,6 +18,7 @@ import ClassDetailPage from './pages/ClassDetailPage'
 import SubjectFormPage from './pages/SubjectFormPage'
 import PerformanceEntryPage from './pages/PerformanceEntryPage'
 import PerformanceViewPage from './pages/PerformanceViewPage'
+import PerformancePage from './pages/PerformancePage'
 import TeacherFormPage from './pages/TeacherFormPage'
 import SubjectsPage from './pages/SubjectsPage'
 import TermsPage from './pages/TermsPage'
@@ -225,6 +226,14 @@ function App() {
           element={
             <ProtectedRoute>
               <SubjectFormPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/performance"
+          element={
+            <ProtectedRoute>
+              <PerformancePage />
             </ProtectedRoute>
           }
         />

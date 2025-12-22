@@ -38,6 +38,7 @@ from app.models.class_subject import ClassSubject
 # Performance
 from app.models.student_performance import StudentPerformance
 from app.models.student_term_comment import StudentTermComment
+from app.models.performance_report import PerformanceReport, PerformanceLineItem
 
 # Authentication tokens
 from app.models.account_setup_token import AccountSetupToken
@@ -99,6 +100,8 @@ __all__ = [
     # Performance
     "StudentPerformance",
     "StudentTermComment",
+    "PerformanceReport",
+    "PerformanceLineItem",
     # Auth tokens
     "AccountSetupToken",
     "PasswordResetToken",
