@@ -127,46 +127,34 @@ const AppLayout = ({ children }: AppLayoutProps) => {
               )
             })}
           </div>
-
-          {/* Administration Section - Only for admins */}
-          {user?.role && ['SCHOOL_ADMIN', 'CAMPUS_ADMIN', 'SUPER_ADMIN'].includes(user.role) && (
-            <div className="mt-8 pt-8 border-t border-gray-200">
-              <p className="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Administration
-              </p>
-              <div className="space-y-1">
-                <Link
-                  to="/admin/members"
-                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors ${
-                    isActive('/admin')
-                      ? 'bg-blue-50 text-primary-600'
-                      : 'text-gray-700 hover:bg-gray-100'
-                  }`}
-                >
-                  <UserCircle2 className="w-5 h-5" />
-                  <span className="font-medium">Members</span>
-                </Link>
-              </div>
-            </div>
-          )}
         </nav>
 
         {/* User Section */}
         <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center justify-between px-2 py-2">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold flex-shrink-0">
-                {user?.first_name?.[0] || 'U'}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between px-2 py-2">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold flex-shrink-0">
+                  {user?.first_name?.[0] || 'U'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {user?.first_name} {user?.last_name}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">{user?.role?.replace('_', ' ')}</p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
-                  {user?.first_name} {user?.last_name}
-                </p>
-                <p className="text-xs text-gray-500 truncate">{user?.role?.replace('_', ' ')}</p>
-              </div>
+              <button className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors">
+                <MoreVertical className="w-5 h-5" />
+              </button>
             </div>
-            <button className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors">
-              <MoreVertical className="w-5 h-5" />
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full px-3 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors"
+            >
+              Log out
             </button>
           </div>
         </div>

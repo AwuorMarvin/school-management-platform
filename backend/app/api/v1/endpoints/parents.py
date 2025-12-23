@@ -411,8 +411,29 @@ async def update_parent(
             detail={"error_code": "PARENT_NOT_FOUND", "message": "Parent not found"}
         )
     
-    # Update user fields
+    # Update user and parent fields
     update_data = parent_data.model_dump(exclude_unset=True)
+    
+    # Handle email update with uniqueness check
+    if "email" in update_data:
+        email = update_data["email"]
+        if email is not None:
+            existing_email_result = await db.execute(
+                select(User).where(
+                    User.email == email,
+                    User.school_id == current_user.school_id,
+                    User.id != parent.user_id,
+                )
+            )
+            if existing_email_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_code": "EMAIL_ALREADY_EXISTS",
+                        "message": "Email already exists in this school",
+                        "recovery": "Use a different email address",
+                    },
+                )
     
     if "phone_number" in update_data:
         # Check phone uniqueness
@@ -433,14 +454,57 @@ async def update_parent(
                 }
             )
     
-    # Update user
-    for field in ["first_name", "last_name", "phone_number"]:
-        if field in update_data:
+    # Update user fields (including optional email)
+    for field in ["first_name", "last_name", "phone_number", "email"]:
+        if field in update_data and update_data[field] is not None:
             setattr(parent.user, field, update_data[field])
     
-    # Update parent
-    if "id_number" in update_data:
+    # Update parent-specific fields
+    if "id_number" in update_data and update_data["id_number"] is not None:
         parent.id_number = update_data["id_number"]
+    
+    # Optionally update parent role across linked student relationships
+    if "role" in update_data and update_data["role"] is not None:
+        new_role = update_data["role"]
+        
+        # Load all current links for this parent
+        links_result = await db.execute(
+            select(StudentParent).where(
+                StudentParent.parent_id == parent.id
+            )
+        )
+        links = list(links_result.scalars().all())
+        
+        if links:
+            student_ids = [link.student_id for link in links]
+            
+            # Check for conflicts: other parents already linked to these students with the same role
+            conflict_result = await db.execute(
+                select(StudentParent).where(
+                    StudentParent.student_id.in_(student_ids),
+                    StudentParent.role == new_role,
+                    StudentParent.parent_id != parent.id,
+                )
+            )
+            conflict = conflict_result.scalar_one_or_none()
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_code": "DUPLICATE_PARENT_ROLE",
+                        "message": f"This student already has a {new_role.lower()} assigned",
+                        "recovery": "Each student can have only one parent per role (father/mother/guardian)",
+                        "details": {
+                            "role": new_role,
+                            "student_id": str(conflict.student_id),
+                        },
+                    },
+                )
+            
+            # No conflicts – update all links for this parent
+            for link in links:
+                link.role = new_role
+                link.updated_at = datetime.now(UTC)
     
     parent.user.updated_at = datetime.now(UTC)
     parent.updated_at = datetime.now(UTC)

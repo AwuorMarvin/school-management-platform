@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { parentsApi, Parent } from '../api/parents'
+import { studentsApi } from '../api/students'
+import { classesApi, TeacherInClass } from '../api/classes'
+import { feeSummaryApi, StudentFeeSummaryResponse } from '../api/feeSummary'
 
 const ParentDetailPage = () => {
   const { id } = useParams<{ id: string }>()
@@ -8,10 +11,21 @@ const ParentDetailPage = () => {
   const [parent, setParent] = useState<Parent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [studentDetails, setStudentDetails] = useState<
+    Record<
+      string,
+      {
+        className?: string
+        teachers: string[]
+        subjects: string[]
+        feeSummary?: StudentFeeSummaryResponse
+      }
+    >
+  >({})
 
   useEffect(() => {
     if (id) {
-      loadParent()
+      void loadParent()
     }
   }, [id])
 
@@ -20,11 +34,89 @@ const ParentDetailPage = () => {
       setLoading(true)
       const data = await parentsApi.get(id!)
       setParent(data)
+
+      if (data.students && data.students.length > 0) {
+        await loadStudentDetails(data)
+      } else {
+        setStudentDetails({})
+      }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load parent')
     } finally {
       setLoading(false)
     }
+  }
+
+  const loadStudentDetails = async (parentData: Parent) => {
+    const detailsMap: Record<
+      string,
+      {
+        className?: string
+        teachers: string[]
+        subjects: string[]
+        feeSummary?: StudentFeeSummaryResponse
+      }
+    > = {}
+
+    const uniqueStudentIds = Array.from(
+      new Set((parentData.students || []).map((s) => s.student_id))
+    )
+
+    await Promise.all(
+      uniqueStudentIds.map(async (studentId) => {
+        try {
+          const student = await studentsApi.get(studentId)
+
+          const classId = student.current_class?.id
+          let className: string | undefined
+          const teachers = new Set<string>()
+          const subjects = new Set<string>()
+
+          if (classId) {
+            className = student.current_class?.name
+            try {
+              const teacherResponse = await classesApi.listTeachers(classId)
+              const teachersInClass: TeacherInClass[] = teacherResponse.data
+
+              teachersInClass.forEach((assignment) => {
+                if (assignment.teacher) {
+                  teachers.add(
+                    `${assignment.teacher.first_name} ${assignment.teacher.last_name}`
+                  )
+                }
+
+                if (assignment.subject) {
+                  subjects.add(assignment.subject.name)
+                }
+              })
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error('Failed to load teachers for class', classId, err)
+            }
+          }
+
+          let feeSummary: StudentFeeSummaryResponse | undefined
+          try {
+            feeSummary = await feeSummaryApi.getStudentSummary(studentId)
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load fee summary for student', studentId, err)
+          }
+
+          detailsMap[studentId] = {
+            className,
+            teachers: Array.from(teachers),
+            subjects: Array.from(subjects),
+            feeSummary,
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('Failed to load student details', studentId, err)
+        }
+      })
+    )
+
+    setStudentDetails(detailsMap)
   }
 
   if (loading) {
@@ -65,32 +157,86 @@ const ParentDetailPage = () => {
     }
   }
 
+  const getParentTypes = () => {
+    if (!parent.students || parent.students.length === 0) {
+      return '—'
+    }
+
+    const labelMap: Record<string, string> = {
+      FATHER: 'Father',
+      MOTHER: 'Mother',
+      GUARDIAN: 'Guardian',
+    }
+
+    const roles = Array.from(
+      new Set(parent.students.map((s) => s.role).filter(Boolean))
+    )
+
+    if (roles.length === 0) {
+      return '—'
+    }
+
+    return roles
+      .map((role) => labelMap[role] || role)
+      .join(', ')
+  }
+
+  const getPlatformAge = () => {
+    const created = new Date(parent.created_at)
+    const now = new Date()
+
+    let years = now.getFullYear() - created.getFullYear()
+    let months = now.getMonth() - created.getMonth()
+    let days = now.getDate() - created.getDate()
+
+    if (days < 0) {
+      const prevMonth = new Date(now.getFullYear(), now.getMonth(), 0)
+      days += prevMonth.getDate()
+      months -= 1
+    }
+
+    if (months < 0) {
+      months += 12
+      years -= 1
+    }
+
+    if (years < 0) {
+      years = 0
+      months = 0
+      days = 0
+    }
+
+    return { years, months, days }
+  }
+
+  const platformAge = getPlatformAge()
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-900">
+                {parent.first_name} {parent.last_name}
+              </h1>
+              <p className="text-sm text-gray-600 mt-1">Parent Details</p>
+            </div>
+            <div className="flex items-center gap-3">
               <Link
                 to="/parents"
-                className="text-gray-600 hover:text-gray-900 transition-colors"
+                className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
               >
-                ← Back
+                Back
               </Link>
-              <div>
-                <h1 className="text-2xl font-semibold text-gray-900">
-                  {parent.first_name} {parent.last_name}
-                </h1>
-                <p className="text-sm text-gray-600 mt-1">Parent Details</p>
-              </div>
+              <Link
+                to={`/parents/${id}/edit`}
+                className="px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors font-medium text-sm"
+              >
+                Edit Parent
+              </Link>
             </div>
-            <Link
-              to={`/parents/${id}/edit`}
-              className="px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors font-medium"
-            >
-              Edit Parent
-            </Link>
           </div>
         </div>
       </header>
@@ -143,6 +289,10 @@ const ParentDetailPage = () => {
                     </span>
                   </dd>
                 </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Parent Type</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{getParentTypes()}</dd>
+                </div>
               </dl>
             </div>
 
@@ -151,29 +301,84 @@ const ParentDetailPage = () => {
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Linked Students</h2>
                 <div className="space-y-4">
-                  {parent.students.map((student) => (
-                    <div
-                      key={student.student_id}
-                      className="p-4 bg-gray-50 rounded-lg border border-gray-200"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <Link
-                            to={`/students/${student.student_id}`}
-                            className="font-medium text-primary-600 hover:text-primary-700"
-                          >
-                            {student.student_name}
-                          </Link>
-                          <p className="text-sm text-gray-600 mt-1">
-                            <span className="font-medium">{student.role}</span>
-                          </p>
-                          <p className="text-sm text-gray-500 mt-1">
-                            Status: {student.student_status}
-                          </p>
+                  {parent.students.map((student) => {
+                    const details = studentDetails[student.student_id]
+                    const teachers = details?.teachers || []
+                    const subjects = details?.subjects || []
+                    const fee = details?.feeSummary
+
+                    return (
+                      <div
+                        key={student.student_id}
+                        className="p-4 bg-gray-50 rounded-lg border border-gray-200"
+                      >
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <Link
+                                to={`/students/${student.student_id}`}
+                                className="font-medium text-primary-600 hover:text-primary-700"
+                              >
+                                {student.student_name}
+                              </Link>
+                              <p className="text-sm text-gray-600 mt-1">
+                                <span className="font-medium">
+                                  {student.role === 'FATHER' && 'Father'}
+                                  {student.role === 'MOTHER' && 'Mother'}
+                                  {student.role === 'GUARDIAN' && 'Guardian'}
+                                  {!['FATHER', 'MOTHER', 'GUARDIAN'].includes(student.role) && student.role}
+                                </span>
+                                {student.student_status && (
+                                  <span className="text-gray-500">
+                                    {' '}
+                                    • Status: {student.student_status}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          <dl className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <dt className="text-gray-500">Class</dt>
+                              <dd className="mt-1 text-gray-900">
+                                {details?.className || 'N/A'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-gray-500">Teachers</dt>
+                              <dd className="mt-1 text-gray-900">
+                                {teachers.length > 0 ? teachers.join(', ') : '—'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-gray-500">Subjects</dt>
+                              <dd className="mt-1 text-gray-900">
+                                {subjects.length > 0 ? subjects.join(', ') : '—'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-gray-500">Fee Balance</dt>
+                              <dd className="mt-1 text-gray-900">
+                                {fee
+                                  ? `Pending: ${fee.pending_amount.toLocaleString('en-KE', {
+                                      style: 'currency',
+                                      currency: 'KES',
+                                    })} (Paid: ${fee.paid_amount.toLocaleString('en-KE', {
+                                      style: 'currency',
+                                      currency: 'KES',
+                                    })}, Expected: ${fee.expected_fee.toLocaleString('en-KE', {
+                                      style: 'currency',
+                                      currency: 'KES',
+                                    })})`
+                                  : '—'}
+                              </dd>
+                            </div>
+                          </dl>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -217,6 +422,12 @@ const ParentDetailPage = () => {
                   <dt className="text-sm font-medium text-gray-500">Last Updated</dt>
                   <dd className="mt-1 text-sm text-gray-900">
                     {new Date(parent.updated_at).toLocaleDateString()}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Platform Age</dt>
+                  <dd className="mt-1 text-sm text-gray-900">
+                    {platformAge.years} years, {platformAge.months} months, {platformAge.days} days
                   </dd>
                 </div>
               </dl>

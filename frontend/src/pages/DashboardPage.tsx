@@ -7,11 +7,13 @@ import ContentCard from '../components/ContentCard'
 import StatusBadge from '../components/StatusBadge'
 import { useAuthStore } from '../store/authStore'
 import { studentsApi, Student } from '../api/students'
-import { usersApi } from '../api/users'
+import { teachersApi } from '../api/teachers'
 import { feeSummaryApi } from '../api/feeSummary'
 import ParentDashboard from './dashboards/ParentDashboard'
 import TeacherDashboard from './dashboards/TeacherDashboard'
 import { Users, UserCircle2, Users2, DollarSign, Eye, MoreVertical } from 'lucide-react'
+import FeePerformancePerClassChart from '../components/FeePerformancePerClassChart'
+import FeePerformancePerTermChart from '../components/FeePerformancePerTermChart'
 
 const DashboardPage = () => {
   const { user } = useAuthStore()
@@ -30,11 +32,16 @@ const DashboardPage = () => {
     activeStudents: 0,
     activeTeachers: 0,
     activeParents: 0,
-    pendingFees: 0,
     studentTeacherRatio: '0:0',
   })
   const [loading, setLoading] = useState(true)
   const [recentStudents, setRecentStudents] = useState<Student[]>([])
+  const [feeStats, setFeeStats] = useState({
+    expected: 0,
+    paid: 0,
+    pending: 0,
+    collectionRate: 0,
+  })
 
   useEffect(() => {
     loadDashboardData()
@@ -50,13 +57,13 @@ const DashboardPage = () => {
       const activeStudents = allStudentsResponse.data.filter(s => s.status === 'ACTIVE')
       
       // Load teachers
-      const teachersResponse = await usersApi.list({ 
-        page: 1, 
-        page_size: 1000, 
-        role: 'TEACHER', 
-        status: 'ACTIVE' 
+      const teachersResponse = await teachersApi.list({
+        page: 1,
+        page_size: 100,
+        status: 'ACTIVE',
+        campus_id: user?.campus_id || undefined,
       })
-      const activeTeachers = teachersResponse.data.filter(t => t.status === 'ACTIVE')
+      const activeTeachers = teachersResponse.data
       
       // Get recent students (all, then filter for active, sorted by created_at desc)
       const recentActiveStudents = allStudentsResponse.data
@@ -64,16 +71,24 @@ const DashboardPage = () => {
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 5)
       
-      // Load pending fees from fee summary
+      // Load fee summary for current term
+      let expectedFees = 0
+      let paidFees = 0
       let pendingFees = 0
+      let collectionRate = 0
       try {
         const feeSummaryResponse = await feeSummaryApi.getCampusSummary({
           campus_id: user?.campus_id || undefined
         })
+        expectedFees = feeSummaryResponse.summary.total_expected || 0
+        paidFees = feeSummaryResponse.summary.total_paid || 0
         pendingFees = feeSummaryResponse.summary.total_pending || 0
+        collectionRate = feeSummaryResponse.summary.payment_rate ?? (
+          expectedFees > 0 ? (paidFees / expectedFees) * 100 : 0
+        )
       } catch (feeErr: any) {
         console.error('Failed to load fee summary:', feeErr)
-        // Continue with 0 if fees API fails
+        // Continue with 0s if fees API fails
       }
       
       // Calculate ratio
@@ -85,8 +100,13 @@ const DashboardPage = () => {
         activeStudents: activeStudents.length,
         activeTeachers: activeTeachers.length,
         activeParents: 0, // Not needed for current cards
-        pendingFees,
         studentTeacherRatio: ratio,
+      })
+      setFeeStats({
+        expected: expectedFees,
+        paid: paidFees,
+        pending: pendingFees,
+        collectionRate,
       })
       setRecentStudents(recentActiveStudents)
     } catch (err: any) {
@@ -106,6 +126,12 @@ const DashboardPage = () => {
   const getCurrentMonthYear = () => {
     const now = new Date()
     return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  }
+
+  const getPaymentRateTextColor = (rate: number) => {
+    if (rate >= 81) return 'text-green-700'
+    if (rate >= 41) return 'text-yellow-700'
+    return 'text-red-700'
   }
 
   return (
@@ -133,7 +159,7 @@ const DashboardPage = () => {
             subtitle="Teachers in campus"
             icon={<UserCircle2 className="w-6 h-6" />}
             borderColor="blue"
-            link="/admin/members"
+            link="/teachers"
             linkText="View Details"
           />
           <StatCard
@@ -142,115 +168,29 @@ const DashboardPage = () => {
             subtitle="Average ratio"
             icon={<Users2 className="w-6 h-6" />}
             borderColor="purple"
-            link="/students"
-            linkText="View Details"
           />
           <StatCard
-            title="Pending Fees"
-            value={formatCurrency(stats.pendingFees)}
-            subtitle="Unpaid fees"
+            title="Fee Collection"
+            value={`${feeStats.collectionRate.toFixed(1)}%`}
+            subtitle={`Expected this term: ${formatCurrency(feeStats.expected)}`}
+            secondaryText={`Paid this term: ${formatCurrency(feeStats.paid)}`}
             icon={<DollarSign className="w-6 h-6" />}
             borderColor="red"
             link="/fee-status"
             linkText="View Details"
+            valueClassName={getPaymentRateTextColor(feeStats.collectionRate)}
           />
         </div>
 
         {/* Recent Students */}
-        <ContentCard
-          title="Recent Students"
-          headerAction={
-            <Link
-              to="/students"
-              className="text-sm text-primary-600 hover:text-primary-700 font-medium"
-            >
-              View all students →
-            </Link>
-          }
-        >
-          {loading ? (
-            <div className="text-center py-8">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-              <p className="mt-4 text-gray-600">Loading...</p>
-            </div>
-          ) : recentStudents.length === 0 ? (
-            <div className="text-center py-8 text-gray-600">
-              <p>No recent students found.</p>
-              <Link
-                to="/students/new"
-                className="mt-4 inline-block text-sm text-primary-600 hover:text-primary-700 font-medium"
-              >
-                Add First Student
-              </Link>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Student ID
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Name
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date of Birth
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {recentStudents.map((student, index) => (
-                    <tr key={student.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          #{student.id.toString().slice(0, 8).toUpperCase()}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {student.first_name} {student.middle_name || ''} {student.last_name}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(student.date_of_birth).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <StatusBadge 
-                          status={student.status === 'ACTIVE' ? 'Active' : student.status} 
-                          variant={student.status === 'ACTIVE' ? 'success' : 'default'}
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center gap-3">
-                          <Link
-                            to={`/students/${student.id}`}
-                            className="text-gray-600 hover:text-primary-600"
-                            title="View"
-                          >
-                            <Eye className="w-5 h-5" />
-                          </Link>
-                          <button
-                            className="text-gray-600 hover:text-gray-900"
-                            title="More options"
-                          >
-                            <MoreVertical className="w-5 h-5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </ContentCard>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ContentCard title="Fee Performance per Class">
+            <FeePerformancePerClassChart />
+          </ContentCard>
+          <ContentCard title="Fee Performance per Term">
+            <FeePerformancePerTermChart />
+          </ContentCard>
+        </div>
       </div>
     </AppLayout>
   )

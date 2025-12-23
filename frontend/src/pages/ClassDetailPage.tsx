@@ -100,7 +100,7 @@ const ClassDetailPage = () => {
   const loadAvailableTeachers = async () => {
     try {
       setLoadingTeachers(true)
-      const response = await usersApi.list({ page: 1, page_size: 1000, role: 'TEACHER', status: 'ACTIVE' })
+      const response = await usersApi.list({ page: 1, page_size: 100, role: 'TEACHER', status: 'ACTIVE' })
       // Filter out teachers already assigned to this class
       const teacherIdsInClass = new Set(teachers.map(t => t.teacher.id))
       setAvailableTeachers(response.data.filter(t => !teacherIdsInClass.has(t.id)))

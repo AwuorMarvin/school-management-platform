@@ -72,6 +72,8 @@ export interface ParentUpdate {
   last_name?: string
   phone_number?: string
   id_number?: string
+  email?: string
+  role?: 'FATHER' | 'MOTHER' | 'Miss' | 'GUARDIAN'
 }
 
 export interface ParentListResponse {

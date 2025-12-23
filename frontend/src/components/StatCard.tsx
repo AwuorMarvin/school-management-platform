@@ -5,20 +5,24 @@ interface StatCardProps {
   title: string
   value: string | number
   subtitle?: string
+  secondaryText?: string
   icon?: ReactNode
   borderColor?: 'green' | 'red' | 'blue' | 'purple' | 'default'
   link?: string
   linkText?: string
+  valueClassName?: string
 }
 
 const StatCard = ({ 
   title, 
   value, 
   subtitle, 
+  secondaryText,
   icon, 
   borderColor = 'default',
   link,
-  linkText 
+  linkText,
+  valueClassName = '',
 }: StatCardProps) => {
   const borderColorClasses = {
     green: 'border-l-green-500',
@@ -33,11 +37,14 @@ const StatCard = ({
       <div className="flex items-center justify-between">
         <div className="flex-1">
           <p className="text-sm font-medium text-gray-600 mb-2">{title}</p>
-          <p className="text-3xl font-bold text-gray-900 mb-1">
+          <p className={`text-3xl font-bold text-gray-900 mb-1 ${valueClassName}`}>
             {value}
           </p>
           {subtitle && (
             <p className="text-xs text-gray-500">{subtitle}</p>
+          )}
+          {secondaryText && (
+            <p className="text-xs text-gray-500 mt-1">{secondaryText}</p>
           )}
           {link && linkText && (
             <Link

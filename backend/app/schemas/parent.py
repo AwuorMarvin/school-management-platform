@@ -49,6 +49,8 @@ class ParentUpdate(BaseModel):
     last_name: Optional[str] = Field(None, min_length=1, max_length=100)
     phone_number: Optional[str] = None
     id_number: Optional[str] = Field(None, max_length=50)
+    email: Optional[EmailStr] = None
+    role: Optional[str] = Field(None, description="Parent role: FATHER, MOTHER, or GUARDIAN")
     
     @field_validator("phone_number")
     @classmethod
@@ -56,6 +58,17 @@ class ParentUpdate(BaseModel):
         """Validate phone number starts with +254."""
         if v and not v.startswith("+254"):
             raise ValueError("Phone number must start with +254 (Kenya format)")
+        return v
+    
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        """Validate parent role on update (if provided)."""
+        if v is None:
+            return v
+        allowed = ["FATHER", "MOTHER", "GUARDIAN"]
+        if v not in allowed:
+            raise ValueError(f"Role must be one of: {', '.join(allowed)}")
         return v
 
 

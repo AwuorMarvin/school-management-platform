@@ -6,6 +6,7 @@ import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
 import { parentsApi, ParentCreate, ParentUpdate } from '../api/parents'
 import { studentsApi, Student } from '../api/students'
+import { useToastStore } from '../store/toastStore'
 
 const ParentFormPage = () => {
   const navigate = useNavigate()
@@ -16,6 +17,9 @@ const ParentFormPage = () => {
   const [loadingStudents, setLoadingStudents] = useState(false)
   const [error, setError] = useState('')
   const [students, setStudents] = useState<Student[]>([])
+  const [showRoleConflictModal, setShowRoleConflictModal] = useState(false)
+  const [conflictMessage, setConflictMessage] = useState('')
+  const errorToast = useToastStore((state) => state.error)
   
   const [formData, setFormData] = useState({
     email: '',
@@ -52,14 +56,16 @@ const ParentFormPage = () => {
     try {
       setLoading(true)
       const parent = await parentsApi.get(id!)
+      const primaryRole =
+        parent.students && parent.students.length > 0 ? parent.students[0].role : 'FATHER'
       setFormData({
         email: parent.email,
         phone_number: parent.phone_number,
         first_name: parent.first_name,
         last_name: parent.last_name,
         id_number: parent.id_number,
-        student_id: '', // Not editable in edit mode
-        role: 'FATHER', // Not editable in edit mode
+        student_id: parent.students && parent.students.length > 0 ? parent.students[0].student_id : '',
+        role: primaryRole,
         campus_id: '',
       })
     } catch (err: any) {
@@ -82,45 +88,120 @@ const ParentFormPage = () => {
     setLoading(true)
 
     try {
-      const data: ParentCreate | ParentUpdate = {
+      const baseData = {
         email: formData.email,
         phone_number: formData.phone_number,
         first_name: formData.first_name,
         last_name: formData.last_name,
         id_number: formData.id_number,
-        ...(isEdit ? {} : { 
-          student_id: formData.student_id,
-          role: formData.role,
-          campus_id: formData.campus_id || undefined 
-        }),
+        role: formData.role,
       }
+
+      const data: ParentCreate | ParentUpdate = isEdit
+        ? (baseData as ParentUpdate)
+        : ({
+            ...baseData,
+            student_id: formData.student_id,
+            campus_id: formData.campus_id || undefined,
+          } as ParentCreate)
 
       if (isEdit && id) {
         await parentsApi.update(id, data as ParentUpdate)
+        const successToast = useToastStore.getState().success
+        successToast('Parent updated successfully')
+        setTimeout(() => navigate('/parents'), 400)
       } else {
         const result = await parentsApi.create(data as ParentCreate)
         if (result.setup_token) {
           alert(`Parent created! Setup token: ${result.setup_token}\n\nThis will be sent via SMS in production.`)
         }
+        const successToast = useToastStore.getState().success
+        successToast('Parent created successfully')
+        setTimeout(() => navigate('/parents'), 400)
+      }
+    } catch (err: any) {
+      const errorCode = err.response?.data?.detail?.error_code || err.response?.data?.error_code
+
+      if (errorCode === 'DUPLICATE_PARENT_ROLE') {
+        const role = (err.response?.data?.detail?.details?.role ||
+          err.response?.data?.details?.role ||
+          formData.role) as string
+        const roleLabel =
+          role === 'FATHER' ? 'father' : role === 'MOTHER' ? 'mother' : role === 'GUARDIAN' ? 'guardian' : 'parent'
+
+        if (!isEdit) {
+          setConflictMessage(
+            `This student already has a ${roleLabel} assigned. You can override to replace the existing ${roleLabel} with these new details, or cancel to keep the existing ${roleLabel}.`
+          )
+          setShowRoleConflictModal(true)
+        } else {
+          const conflictMsg = `This student already has a ${roleLabel} assigned. You cannot change this parent to that role.`
+          setError(conflictMsg)
+          errorToast(conflictMsg)
+        }
+      } else {
+        const errorMessage = 
+          err.response?.data?.detail?.message ||
+          err.response?.data?.message ||
+          err.message ||
+          'Failed to save parent'
+        
+        // Handle validation errors
+        if (err.response?.data?.detail?.fields) {
+          const fieldErrors = err.response.data.detail.fields
+            .map((f: any) => `${f.field}: ${f.message}`)
+            .join(', ')
+          setError(`Validation errors: ${fieldErrors}`)
+          errorToast(`Validation errors: ${fieldErrors}`)
+        } else {
+          setError(errorMessage)
+          errorToast(errorMessage)
+        }
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleOverrideParentRole = async () => {
+    if (!formData.student_id) {
+      setShowRoleConflictModal(false)
+      return
+    }
+
+    try {
+      setLoading(true)
+      setError('')
+
+      // Find existing parent for this student+role
+      const student = await studentsApi.get(formData.student_id)
+      const existingLink = (student.parents || []).find((p) => p.role === formData.role)
+
+      if (!existingLink) {
+        setShowRoleConflictModal(false)
+        setLoading(false)
+        return
       }
 
+      await parentsApi.update(existingLink.id, {
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        phone_number: formData.phone_number,
+        id_number: formData.id_number,
+        email: formData.email,
+      })
+
+      setShowRoleConflictModal(false)
       navigate('/parents')
     } catch (err: any) {
       const errorMessage = 
         err.response?.data?.detail?.message ||
         err.response?.data?.message ||
         err.message ||
-        'Failed to save parent'
-      
-      // Handle validation errors
-      if (err.response?.data?.detail?.fields) {
-        const fieldErrors = err.response.data.detail.fields
-          .map((f: any) => `${f.field}: ${f.message}`)
-          .join(', ')
-        setError(`Validation errors: ${fieldErrors}`)
-      } else {
-        setError(errorMessage)
-      }
+        'Failed to override existing parent'
+      setError(errorMessage)
+      errorToast(errorMessage)
+      setShowRoleConflictModal(false)
     } finally {
       setLoading(false)
     }
@@ -170,11 +251,11 @@ const ParentFormPage = () => {
         )}
         <ContentCard>
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Student Selection - Only for new parents */}
-            {!isEdit && (
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">Student Information</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Student & Parent Role */}
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Student & Parent Role</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {!isEdit && (
                   <div>
                     <label htmlFor="student_id" className="block text-sm font-medium text-gray-700 mb-2">
                       Student <span className="text-error-500">*</span>
@@ -185,7 +266,7 @@ const ParentFormPage = () => {
                       value={formData.student_id}
                       onChange={handleChange}
                       required
-                      disabled={loadingStudents}
+                      disabled={loadingStudents || isEdit}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors disabled:bg-gray-100"
                     >
                       <option value="">Select Student</option>
@@ -199,30 +280,30 @@ const ParentFormPage = () => {
                       Select the student this parent is associated with
                     </p>
                   </div>
+                )}
 
-                  <div>
-                    <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-2">
-                      Parent Role <span className="text-error-500">*</span>
-                    </label>
-                    <select
-                      id="role"
-                      name="role"
-                      value={formData.role}
-                      onChange={handleChange}
-                      required
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
-                    >
-                      <option value="FATHER">Father</option>
-                      <option value="MOTHER">Mother</option>
-                      <option value="GUARDIAN">Guardian</option>
-                    </select>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Specify the relationship to the student
-                    </p>
-                  </div>
+                <div>
+                  <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-2">
+                    Parent Role <span className="text-error-500">*</span>
+                  </label>
+                  <select
+                    id="role"
+                    name="role"
+                    value={formData.role}
+                    onChange={handleChange}
+                    required
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500.transition-colors"
+                  >
+                    <option value="FATHER">Father</option>
+                    <option value="MOTHER">Mother</option>
+                    <option value="GUARDIAN">Guardian</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Specify the relationship to the student
+                  </p>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Contact Information */}
             <div>
@@ -239,13 +320,9 @@ const ParentFormPage = () => {
                     value={formData.email}
                     onChange={handleChange}
                     required
-                    disabled={isEdit}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
                     placeholder="parent@example.com"
                   />
-                  {isEdit && (
-                    <p className="mt-1 text-xs text-gray-500">Email cannot be changed</p>
-                  )}
                 </div>
 
                 <div>
@@ -349,6 +426,36 @@ const ParentFormPage = () => {
             </div>
           </form>
         </ContentCard>
+
+        {/* Duplicate parent role conflict modal */}
+        {showRoleConflictModal && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-25">
+            <div className="bg-white rounded-xl shadow-lg border border-gray-200 max-w-lg w-full p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Parent Role Conflict</h2>
+              <p className="text-sm text-gray-700 mb-4">{conflictMessage}</p>
+              <div className="bg-warning-50 border border-warning-200 rounded-lg p-3 mb-4 text-sm text-warning-900">
+                Each student can only have one parent for each role (Father, Mother, Guardian). Overriding will
+                update the existing parent record with the new details you entered.
+              </div>
+              <div className="flex justify-end gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRoleConflictModal(false)}
+                  className="px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOverrideParentRole}
+                  className="px-4 py-2.5 text-sm font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  Override
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppLayout>
   )

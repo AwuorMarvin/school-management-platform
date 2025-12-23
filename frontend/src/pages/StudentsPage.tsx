@@ -4,13 +4,16 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { studentsApi, Student } from '../api/students'
+import { studentsApi, Student, StudentListResponse } from '../api/students'
+import { classesApi, Class, TeacherInClass } from '../api/classes'
+
+type StudentPagination = StudentListResponse['pagination']
 
 const StudentsPage = () => {
   const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [pagination, setPagination] = useState({
+  const [pagination, setPagination] = useState<StudentPagination>({
     page: 1,
     page_size: 20,
     total: 0,
@@ -20,11 +23,22 @@ const StudentsPage = () => {
   })
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('')
+  const [classFilter, setClassFilter] = useState<string>('')
+  const [teacherFilter, setTeacherFilter] = useState<string>('')
+  const [subjectFilter, setSubjectFilter] = useState<string>('')
+  const [classOptions, setClassOptions] = useState<Class[]>([])
+  const [classAssignments, setClassAssignments] = useState<
+    Record<string, { teachers: { id: string; name: string }[]; subjects: { id: string; name: string }[] }>
+  >({})
 
   useEffect(() => {
-    loadStudents()
+    void loadStudents()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.page, statusFilter])
+
+  useEffect(() => {
+    loadClassMetadata()
+  }, [])
 
   const loadStudents = async () => {
     try {
@@ -35,7 +49,6 @@ const StudentsPage = () => {
         skip,
         limit: pagination.page_size,
         status: statusFilter || undefined,
-        search: search || undefined,
       })
       setStudents(response.data)
       setPagination(response.pagination)
@@ -46,17 +59,159 @@ const StudentsPage = () => {
     }
   }
 
-  const handleSearch = () => {
-    setPagination((prev) => ({ ...prev, page: 1 }))
-    setTimeout(() => {
-      loadStudents()
-    }, 100)
+  const loadClassMetadata = async () => {
+    try {
+      const classesResponse = await classesApi.list({ page: 1, page_size: 100 })
+      const classes = classesResponse.data
+      setClassOptions(classes)
+
+      const assignmentsMap: Record<
+        string,
+        { teachers: { id: string; name: string }[]; subjects: { id: string; name: string }[] }
+      > = {}
+      const teacherMap = new Map<string, string>()
+      const subjectMap = new Map<string, string>()
+
+      for (const cls of classes) {
+        try {
+          const teacherResponse = await classesApi.listTeachers(cls.id)
+          const teachersInClass: TeacherInClass[] = teacherResponse.data
+
+          const teacherSet = new Map<string, string>()
+          const subjectSet = new Map<string, string>()
+
+          teachersInClass.forEach((assignment) => {
+            if (assignment.teacher) {
+              const name = `${assignment.teacher.first_name} ${assignment.teacher.last_name}`
+              teacherSet.set(assignment.teacher.id, name)
+              teacherMap.set(assignment.teacher.id, name)
+            }
+            if (assignment.subject) {
+              subjectSet.set(assignment.subject.id, assignment.subject.name)
+              subjectMap.set(assignment.subject.id, assignment.subject.name)
+            }
+          })
+
+          assignmentsMap[cls.id] = {
+            teachers: Array.from(teacherSet.entries()).map(([id, name]) => ({ id, name })),
+            subjects: Array.from(subjectSet.entries()).map(([id, name]) => ({ id, name })),
+          }
+        } catch (err) {
+          // Skip classes that fail to load teacher metadata
+          // eslint-disable-next-line no-console
+          console.error('Failed to load teachers for class', cls.id, err)
+        }
+      }
+
+      setClassAssignments(assignmentsMap)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load class metadata', err)
+    }
   }
 
   const handleStatusChange = (newStatus: string) => {
     setStatusFilter(newStatus)
     setPagination((prev) => ({ ...prev, page: 1 }))
   }
+
+  const getTeachersForStudent = (student: Student) => {
+    const classId = student.current_class?.id
+    if (!classId) return []
+    return classAssignments[classId]?.teachers || []
+  }
+
+  const getSubjectsForStudent = (student: Student) => {
+    const classId = student.current_class?.id
+    if (!classId) return []
+    return classAssignments[classId]?.subjects || []
+  }
+
+  const getPaginationRange = () => {
+    const page = pagination?.page ?? 1
+    const pageSize = pagination?.page_size ?? 0
+    const total = pagination?.total ?? 0
+
+    if (total === 0 || pageSize === 0) {
+      return { from: 0, to: 0, total: 0 }
+    }
+
+    const from = (page - 1) * pageSize + 1
+    const to = Math.min(page * pageSize, total)
+
+    return { from, to, total }
+  }
+
+  const filteredStudents = students.filter((student) => {
+    const fullName = `${student.first_name} ${student.middle_name || ''} ${student.last_name}`
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (search && fullName !== search) {
+      return false
+    }
+
+    if (classFilter && student.current_class?.id !== classFilter) {
+      return false
+    }
+
+    const teachers = getTeachersForStudent(student)
+    const subjects = getSubjectsForStudent(student)
+
+    if (teacherFilter && !teachers.some((t) => t.id === teacherFilter)) {
+      return false
+    }
+
+    if (subjectFilter && !subjects.some((s) => s.id === subjectFilter)) {
+      return false
+    }
+
+    return true
+  })
+
+  const paginationRange = getPaginationRange()
+
+  // Derived teacher and subject options based on current class filter
+  const teacherOptions = (() => {
+    const ids = classFilter ? [classFilter] : Object.keys(classAssignments)
+    const map = new Map<string, string>()
+
+    ids.forEach((classId) => {
+      const assignment = classAssignments[classId]
+      assignment?.teachers.forEach((t) => {
+        if (!map.has(t.id)) {
+          map.set(t.id, t.name)
+        }
+      })
+    })
+
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  })()
+
+  const subjectOptions = (() => {
+    const ids = classFilter ? [classFilter] : Object.keys(classAssignments)
+    const map = new Map<string, string>()
+
+    ids.forEach((classId) => {
+      const assignment = classAssignments[classId]
+      assignment?.subjects.forEach((s) => {
+        if (!map.has(s.id)) {
+          map.set(s.id, s.name)
+        }
+      })
+    })
+
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  })()
+
+  const studentNameOptions = Array.from(
+    new Set(
+      students.map(
+        (student) =>
+          `${student.first_name} ${student.middle_name || ''} ${student.last_name}`.replace(/\s+/g, ' ').trim()
+      )
+    )
+  )
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-KE', {
@@ -86,25 +241,24 @@ const StudentsPage = () => {
       <div className="p-8">
         {/* Filters */}
         <ContentCard>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  placeholder="Search by name..."
-                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
-                />
-                <button
-                  onClick={handleSearch}
-                  className="px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
-                >
-                  Search
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+              <select
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setPagination((prev) => ({ ...prev, page: 1 }))
+                }}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+              >
+                <option value="">All Students</option>
+                {studentNameOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
@@ -120,13 +274,60 @@ const StudentsPage = () => {
                 <option value="TRANSFERRED_OUT">Transferred Out</option>
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Class</label>
+              <select
+                value={classFilter}
+                onChange={(e) => setClassFilter(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+              >
+                <option value="">All Classes</option>
+                {classOptions.map((cls) => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Teacher</label>
+              <select
+                value={teacherFilter}
+                onChange={(e) => setTeacherFilter(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+              >
+                <option value="">All Teachers</option>
+                {teacherOptions.map((teacher) => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Subject</label>
+              <select
+                value={subjectFilter}
+                onChange={(e) => setSubjectFilter(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+              >
+                <option value="">All Subjects</option>
+                {subjectOptions.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-end">
               <button
                 onClick={() => {
                   setSearch('')
                   setStatusFilter('')
+                  setClassFilter('')
+                  setTeacherFilter('')
+                  setSubjectFilter('')
                   setPagination((prev) => ({ ...prev, page: 1 }))
-                  loadStudents()
                 }}
                 className="w-full px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -138,7 +339,7 @@ const StudentsPage = () => {
 
         {/* Students Table */}
         <ContentCard
-          title={`Students (${pagination.total})`}
+          title={`Students (${filteredStudents.length})`}
           className="mt-6"
         >
           {loading ? (
@@ -185,13 +386,26 @@ const StudentsPage = () => {
                         Status
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Teachers
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Subjects
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {students.map((student) => (
-                      <tr key={student.id} className="hover:bg-gray-50">
+                    {filteredStudents.map((student) => {
+                      const teachers = getTeachersForStudent(student)
+                      const subjects = getSubjectsForStudent(student)
+
+                      const teacherNames = teachers.map((t) => t.name).join(', ')
+                      const subjectNames = subjects.map((s) => s.name).join(', ')
+
+                      return (
+                        <tr key={student.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">
                             {student.first_name} {student.middle_name || ''} {student.last_name}
@@ -237,6 +451,16 @@ const StudentsPage = () => {
                             {student.status}
                           </span>
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {teacherNames || '—'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {subjectNames || '—'}
+                          </div>
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex items-center gap-2">
                             <Link
@@ -263,7 +487,8 @@ const StudentsPage = () => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -272,9 +497,7 @@ const StudentsPage = () => {
               {pagination.total_pages > 1 && (
                 <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between mt-4">
                   <div className="text-sm text-gray-700">
-                    Showing {(pagination.page - 1) * pagination.page_size + 1} to{' '}
-                    {Math.min(pagination.page * pagination.page_size, pagination.total)} of{' '}
-                    {pagination.total} results
+                    Showing {paginationRange.from} to {paginationRange.to} of {paginationRange.total} results
                   </div>
                   <div className="flex gap-2">
                     <button
