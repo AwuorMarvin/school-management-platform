@@ -620,21 +620,26 @@ async def get_student_fee_summary(
     
     # Get active term if not provided
     if not term_id:
-        academic_year, term = await get_active_academic_year_and_term(db, current_user.school_id)
-        if not term:
+        academic_year, term_temp = await get_active_academic_year_and_term(db, current_user.school_id)
+        if not term_temp:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error_code": "NO_ACTIVE_TERM", "message": "No active term found"}
             )
-        term_id = term.id
-    else:
-        term_result = await db.execute(select(Term).where(Term.id == term_id))
-        term = term_result.scalar_one_or_none()
-        if not term:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error_code": "TERM_NOT_FOUND", "message": "Term not found"}
-            )
+        term_id = term_temp.id
+    
+    # Fetch term with academic_year relationship loaded (needed for response)
+    term_result = await db.execute(
+        select(Term)
+        .where(Term.id == term_id)
+        .options(selectinload(Term.academic_year))
+    )
+    term = term_result.scalar_one_or_none()
+    if not term:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": "TERM_NOT_FOUND", "message": "Term not found"}
+        )
     
     # Get or calculate fee
     fee_result = await db.execute(

@@ -121,6 +121,7 @@ const FeePerformancePerClassChart: React.FC<FeePerformancePerClassChartProps> = 
           <Legend
             verticalAlign="top"
             align="left"
+            wrapperStyle={{ marginTop: '-25px' }}
           />
           {/* Expected (green) */}
           <Bar

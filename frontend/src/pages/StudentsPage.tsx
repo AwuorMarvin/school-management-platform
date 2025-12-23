@@ -475,15 +475,6 @@ const StudentsPage = () => {
                             >
                               Edit
                             </Link>
-                            <button
-                              onClick={() => {
-                                // TODO: Implement quick actions (e.g., change status, view fees, etc.)
-                                console.log('Quick action for student:', student.id)
-                              }}
-                              className="text-primary-600 hover:text-primary-900"
-                            >
-                              Actions
-                            </button>
                           </div>
                         </td>
                       </tr>

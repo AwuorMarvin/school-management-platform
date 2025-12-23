@@ -3,6 +3,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import PaymentModal from '../components/PaymentModal'
+import PayFeesModal from '../components/PayFeesModal'
 import { feeSummaryApi, CampusFeeSummary, ClassFeeSummaryResponse } from '../api/feeSummary'
 import { classesApi } from '../api/classes'
 import { useToastStore } from '../store/toastStore'
@@ -34,6 +35,7 @@ const FeeStatusPage = () => {
   const [termId, setTermId] = useState<string | undefined>()
   const [currentTermId, setCurrentTermId] = useState<string | undefined>()
   const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [payFeesModalOpen, setPayFeesModalOpen] = useState(false)
   const [selectedStudent, setSelectedStudent] = useState<{
     studentId: string
     studentName: string
@@ -317,7 +319,17 @@ const FeeStatusPage = () => {
 
   return (
     <AppLayout>
-      <PageHeader title="Campus Fee Summary" />
+      <PageHeader 
+        title="Campus Fee Summary" 
+        action={
+          <button
+            onClick={() => setPayFeesModalOpen(true)}
+            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
+            Pay Fees
+          </button>
+        }
+      />
       <div className="p-8 pb-24">
         <ContentCard>
           {campuses.length === 0 ? (
@@ -648,7 +660,7 @@ const FeeStatusPage = () => {
         </div>
       </div>
 
-      {/* Payment Modal */}
+      {/* Payment Modal (for row-level payments) */}
       {selectedStudent && (
         <PaymentModal
           isOpen={paymentModalOpen}
@@ -674,6 +686,21 @@ const FeeStatusPage = () => {
           }}
         />
       )}
+
+      {/* Pay Fees Modal (for header button) */}
+      <PayFeesModal
+        isOpen={payFeesModalOpen}
+        onClose={() => setPayFeesModalOpen(false)}
+        onPaymentSuccess={() => {
+          // Reload the class data to refresh payment information
+          if (expandedCampuses.size > 0 && expandedClasses.size > 0) {
+            const campusId = Array.from(expandedCampuses)[0]
+            const classId = Array.from(expandedClasses)[0]
+            loadClassData(campusId, classId)
+          }
+          loadCampusData()
+        }}
+      />
     </AppLayout>
   )
 }
