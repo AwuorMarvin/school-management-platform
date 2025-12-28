@@ -330,9 +330,6 @@ const StudentFormPage = () => {
           last_name: formData.last_name,
           date_of_birth: formData.date_of_birth,
           status: formData.status,
-          club_activity_ids: formData.club_activity_ids.length > 0 ? formData.club_activity_ids : undefined,
-          transport_route_id: formData.transport_route_id || undefined,
-          transport_type: formData.transport_route_id ? formData.transport_type : undefined,
           father: formData.father.first_name ? {
             first_name: formData.father.first_name,
             last_name: formData.father.last_name,
@@ -757,7 +754,7 @@ const StudentFormPage = () => {
                             type={field === 'email' ? 'email' : field === 'phone_number' ? 'tel' : 'text'}
                             value={formData.father[field]}
                             onChange={(e) => handleParentChange('father', field, e.target.value)}
-                            required={isRequired}
+                            required={!!isRequired}
                             className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
                             placeholder={`Enter ${field.replace('_', ' ')}`}
                           />
@@ -784,7 +781,7 @@ const StudentFormPage = () => {
                             type={field === 'email' ? 'email' : field === 'phone_number' ? 'tel' : 'text'}
                             value={formData.mother[field]}
                             onChange={(e) => handleParentChange('mother', field, e.target.value)}
-                            required={isRequired}
+                            required={!!isRequired}
                             className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
                             placeholder={`Enter ${field.replace('_', ' ')}`}
                           />
@@ -811,7 +808,7 @@ const StudentFormPage = () => {
                             type={field === 'email' ? 'email' : field === 'phone_number' ? 'tel' : 'text'}
                             value={formData.guardian[field]}
                             onChange={(e) => handleParentChange('guardian', field, e.target.value)}
-                            required={isRequired}
+                            required={!!isRequired}
                             className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
                             placeholder={`Enter ${field.replace('_', ' ')}`}
                           />

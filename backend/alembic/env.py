@@ -97,14 +97,33 @@ async def run_async_migrations() -> None:
     # Get database URL from config (already set from settings)
     database_url = config.get_main_option("sqlalchemy.url")
     
+    # Remove pgbouncer parameter if present (asyncpg doesn't accept it)
+    # pgbouncer=true is used for other drivers but not needed for asyncpg
+    if "?pgbouncer=" in database_url or "&pgbouncer=" in database_url:
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        parsed = urlparse(database_url)
+        query_params = parse_qs(parsed.query)
+        # Remove pgbouncer parameter
+        query_params.pop("pgbouncer", None)
+        # Rebuild URL without pgbouncer parameter
+        new_query = urlencode(query_params, doseq=True)
+        database_url = urlunparse(parsed._replace(query=new_query))
+    
     # Create async engine directly with the URL
     # This ensures we use asyncpg driver
     from sqlalchemy.ext.asyncio import create_async_engine
+    
+    # For pgbouncer (transaction mode), disable prepared statement cache
+    # pgbouncer doesn't support prepared statements properly
+    connect_args = {}
+    if "pooler.supabase.com" in database_url:
+        connect_args["statement_cache_size"] = 0
     
     connectable = create_async_engine(
         database_url,
         poolclass=pool.NullPool,
         echo=False,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

@@ -32,7 +32,7 @@ const FeeStatusPage = () => {
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [termId, setTermId] = useState<string | undefined>()
+  const [termId, _setTermId] = useState<string | undefined>()
   const [currentTermId, setCurrentTermId] = useState<string | undefined>()
   const [paymentModalOpen, setPaymentModalOpen] = useState(false)
   const [payFeesModalOpen, setPayFeesModalOpen] = useState(false)

@@ -28,7 +28,7 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
-  ChevronRight
+  ChevronRight as _ChevronRight
 } from 'lucide-react'
 
 interface LineItem {
@@ -50,7 +50,7 @@ const FeeStructureAnnualFormPage = () => {
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
   const [loadingStructure, setLoadingStructure] = useState(false)
-  const [checkingConflicts, setCheckingConflicts] = useState(false)
+  const [checkingConflicts, _setCheckingConflicts] = useState(false)
   const [error, setError] = useState('')
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([])
   const [terms, setTerms] = useState<Term[]>([])
@@ -59,7 +59,7 @@ const FeeStructureAnnualFormPage = () => {
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([])
   const [conflictData, setConflictData] = useState<FeeStructureConflictResponse | null>(null)
   const [showConflictModal, setShowConflictModal] = useState(false)
-  const [mergeStrategy, setMergeStrategy] = useState<'MERGE' | 'OVERRIDE' | null>(null)
+  const [_mergeStrategy, _setMergeStrategy] = useState<'MERGE' | 'OVERRIDE' | null>(null)
   const [originalStructure, setOriginalStructure] = useState<FeeStructure | null>(null)
   
   const [formData, setFormData] = useState({
@@ -524,15 +524,15 @@ const FeeStructureAnnualFormPage = () => {
             return true
           })
           .map((item, idx) => {
-            // Convert amount to number (Pydantic will convert to Decimal)
+            // Keep amount as string (FeeLineItemCreate expects string)
             const amount = parseFloat(item.amount) || 0
             return {
               item_name: item.item_name.trim(),
-              amount: amount, // Send as number, Pydantic will convert to Decimal
+              amount: amount.toString(), // Send as string, backend will convert to Decimal
               display_order: displayOrderStart + idx,
               is_annual: item.is_annual || false,
               is_one_off: item.is_one_off || false,
-            }
+            } as FeeLineItemCreate
           })
       }
 
@@ -591,8 +591,7 @@ const FeeStructureAnnualFormPage = () => {
           setConflictData({
             has_conflicts: true,
             conflicts: errorDetail.conflicts || [],
-            message: errorDetail.message || 'Conflicts found',
-            conflicting_structure_ids: errorDetail.conflicting_structure_ids || []
+            message: errorDetail.message || 'Conflicts found'
           })
           setShowConflictModal(true)
           return
@@ -745,10 +744,6 @@ const FeeStructureAnnualFormPage = () => {
     { id: 'oneoff' as const, label: 'One-Off Fees', section: 'one_off_items' as const },
   ]
 
-  const getCurrentSection = () => {
-    const tab = tabs.find(t => t.id === activeTab)
-    return tab ? tab.section : 'term_1_items'
-  }
 
   const getSectionTotal = (section: typeof tabs[number]['section']) => {
     return formData[section].reduce((sum, item) => {

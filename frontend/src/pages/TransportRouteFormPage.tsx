@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { transportRoutesApi, TransportRouteCreate, TransportRouteUpdate, TransportRoute } from '../api/transportRoutes'
+import { transportRoutesApi, TransportRouteCreate, TransportRouteUpdate, TransportRoute as _TransportRoute } from '../api/transportRoutes'
 import { useAuthStore } from '../store/authStore'
 
 const TransportRouteFormPage = () => {

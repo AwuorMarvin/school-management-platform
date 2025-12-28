@@ -10,7 +10,7 @@ import { subjectsApi, Subject } from '../api/subjects'
 import { classesApi, TeacherInClass } from '../api/classes'
 import { feeSummaryApi, StudentFeeSummaryResponse } from '../api/feeSummary'
 import { termsApi, Term } from '../api/terms'
-import { performanceApi, PerformanceReportCreatePayload, PerformanceReportListItem } from '../api/performance'
+import { performanceApi, PerformanceReportCreatePayload, PerformanceReportListItem as _PerformanceReportListItem } from '../api/performance'
 import { academicYearsApi } from '../api/academicYears'
 import { useToastStore } from '../store/toastStore'
 
@@ -64,47 +64,6 @@ const StudentDetailPage = () => {
       loadStudent()
     }
   }, [id])
-
-  const loadPerformanceReports = async () => {
-    if (!student || !isViewPerformanceModalOpen) return
-
-    try {
-      setLoadingPerformanceReports(true)
-      const response = await performanceApi.listReports({
-        student_id: student.id,
-        academic_year_id: performanceFilters.academic_year_id || undefined,
-        term_id: performanceFilters.term_id || undefined,
-        page: 1,
-        page_size: 1000, // Get all records
-      })
-
-      // Fetch full details for each report to get line items
-      const reportsWithDetails = await Promise.all(
-        response.data.map(async (report) => {
-          try {
-            const fullReport = await performanceApi.getReport(report.id)
-            return {
-              ...report,
-              line_items: fullReport.line_items,
-            }
-          } catch (err) {
-            console.error(`Failed to load details for report ${report.id}:`, err)
-            return {
-              ...report,
-              line_items: [],
-            }
-          }
-        }),
-      )
-
-      setPerformanceReports(reportsWithDetails)
-    } catch (err: any) {
-      console.error('Failed to load performance reports:', err)
-      setPerformanceReports([])
-    } finally {
-      setLoadingPerformanceReports(false)
-    }
-  }
 
   useEffect(() => {
     if (isViewPerformanceModalOpen && student) {
@@ -669,12 +628,6 @@ const StudentDetailPage = () => {
                   <dt className="text-sm font-medium text-gray-500">Student ID</dt>
                   <dd className="mt-1 text-sm text-gray-900 font-mono">{student.id}</dd>
                 </div>
-                {student.campus && (
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Campus</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{student.campus.name}</dd>
-                  </div>
-                )}
                 <div>
                   <dt className="text-sm font-medium text-gray-500">Created</dt>
                   <dd className="mt-1 text-sm text-gray-900">
@@ -732,6 +685,10 @@ const StudentDetailPage = () => {
                     setPerformanceFormSubmitting(true)
 
                     // Get class details to get academic_year_id
+                    if (!student.current_class) {
+                      setPerformanceFormError('Student must have a current class')
+                      return
+                    }
                     const classData = await classesApi.get(student.current_class.id)
 
                     // Check for existing performance report
@@ -760,8 +717,8 @@ const StudentDetailPage = () => {
                     const payload: PerformanceReportCreatePayload = {
                       student_id: student.id,
                       academic_year_id: classData.academic_year_id,
-                      term_id: currentTerm.id,
-                      class_id: student.current_class.id,
+                      term_id: currentTerm?.id || '',
+                      class_id: student.current_class?.id || '',
                       subject_id: performanceSubjectId,
                       line_items: validLineItems.map((item, index) => ({
                         area_label: item.area_label.trim(),
@@ -1098,7 +1055,11 @@ const StudentDetailPage = () => {
                         setPerformanceFormSubmitting(true)
                         setShowConflictModal(false)
 
-                        const classData = await classesApi.get(student.current_class!.id)
+                        if (!student.current_class) {
+                          setPerformanceFormError('Student must have a current class')
+                          return
+                        }
+                        await classesApi.get(student.current_class.id)
 
                         // Merge existing line items with new ones
                         const existingItems = existingPerformanceReport.line_items.map((item) => ({
@@ -1109,6 +1070,11 @@ const StudentDetailPage = () => {
                           position: existingPerformanceReport.line_items.indexOf(item) + 1,
                         }))
 
+                        const validLineItems = performanceLineItems.filter(
+                          (item) =>
+                            item.area_label.trim().length > 0 &&
+                            (item.numeric_score?.trim() || item.descriptive_score?.trim()),
+                        )
                         const newItems = validLineItems.map((item, index) => ({
                           area_label: item.area_label.trim(),
                           numeric_score:

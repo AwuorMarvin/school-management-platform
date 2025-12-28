@@ -111,7 +111,11 @@ const FeeStructureYearlyFormPage = () => {
           })
           res.data.forEach(fs => {
             // For yearly creation, block if ANY structure exists (TERM or YEAR)
-            blocked.add(fs.class_id)
+            if (fs.class_id) {
+              blocked.add(fs.class_id)
+            } else if (fs.class_ids && fs.class_ids.length > 0) {
+              fs.class_ids.forEach(id => blocked.add(id))
+            }
           })
         } catch (err) {
           console.error('Failed to load fee structures for term when blocking yearly classes', err)
@@ -126,10 +130,11 @@ const FeeStructureYearlyFormPage = () => {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value, type, checked } = e.target
+    const { name, value } = e.target
+    const target = e.target as HTMLInputElement
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: target.type === 'checkbox' ? target.checked : value,
     }))
   }
 

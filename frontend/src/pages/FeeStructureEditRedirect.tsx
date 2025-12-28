@@ -14,7 +14,7 @@ const FeeStructureEditRedirect = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const errorToast = useToastStore((state) => state.error)
-  const [loading, setLoading] = useState(true)
+  const [_loading, setLoading] = useState(true)
 
   useEffect(() => {
     const loadAndRedirect = async () => {

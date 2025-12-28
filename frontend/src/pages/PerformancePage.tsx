@@ -53,7 +53,7 @@ const PerformancePage = () => {
   const [classes, setClasses] = useState<SelectOption[]>([])
   const [subjects, setSubjects] = useState<SelectOption[]>([])
   const [students, setStudents] = useState<SelectOption[]>([])
-  const [teachers] = useState<SelectOption[]>([])
+  const [_teachers] = useState<SelectOption[]>([])
 
   const [filters, setFilters] = useState({
     academic_year_id: '',
@@ -79,7 +79,6 @@ const PerformancePage = () => {
   const [viewReport, setViewReport] = useState<PerformanceReport | null>(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
 
-  const isParent = user?.role === 'PARENT'
   const isTeacher = user?.role === 'TEACHER'
   const isAdmin =
     user?.role === 'SCHOOL_ADMIN' || user?.role === 'CAMPUS_ADMIN' || user?.role === 'SUPER_ADMIN'

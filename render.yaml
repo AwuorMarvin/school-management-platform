@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: school-management-api
+    env: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --prefer-binary --no-cache-dir -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard (Supabase connection string)
+      - key: REDIS_URL
+        sync: false  # Set manually in Render dashboard (Upstash Redis URL)
+      - key: JWT_SECRET_KEY
+        sync: false  # Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"
+      - key: CORS_ORIGINS
+        sync: false  # Set manually with Vercel URL(s), comma-separated
+      - key: EMAIL_ENABLED
+        value: "false"
+      - key: SMS_ENABLED
+        value: "false"
+      # Optional - only set if using S3 (not needed for $0 deployment)
+      # - key: AWS_ACCESS_KEY_ID
+      #   sync: false
+      # - key: AWS_SECRET_ACCESS_KEY
+      #   sync: false
+      # - key: AWS_S3_BUCKET_NAME
+      #   sync: false
+

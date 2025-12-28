@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { feeStructuresApi, FeeStructureCreate, FeeStructureUpdate, FeeStructure, FeeLineItemCreate } from '../api/feeStructures'
+import { feeStructuresApi, FeeStructureCreate, FeeStructureUpdate, FeeStructure as _FeeStructure, FeeLineItemCreate } from '../api/feeStructures'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
 import { termsApi, Term } from '../api/terms'
 import { classesApi, Class } from '../api/classes'
@@ -123,8 +123,10 @@ const FeeStructureFormPage = () => {
             page_size: 1000,
           })
           res.data.forEach(fs => {
-            if (fs.structure_scope === 'YEAR') {
+            if (fs.structure_scope === 'YEAR' && fs.class_id) {
               blocked.add(fs.class_id)
+            } else if (fs.structure_scope === 'YEAR' && fs.class_ids && fs.class_ids.length > 0) {
+              fs.class_ids.forEach(id => blocked.add(id))
             }
           })
         } catch (err) {
@@ -159,16 +161,21 @@ const FeeStructureFormPage = () => {
       setLoading(true)
       const structure = await feeStructuresApi.get(id!)
       // Load class to get campus and academic year
-      const classObj = await classesApi.get(structure.class_id)
+      const classId = structure.class_id || structure.class_ids?.[0]
+      if (!classId) {
+        setError('Fee structure has no class assigned')
+        return
+      }
+      const classObj = await classesApi.get(classId)
       
       setFormData({
         structure_name: structure.structure_name,
         campus_id: classObj.campus_id || '',
         academic_year_id: classObj.academic_year_id || '',
-        class_id: structure.class_id,
-        term_id: structure.term_id,
+        class_id: classId,
+        term_id: structure.term_id || '',
         status: structure.status as 'ACTIVE' | 'INACTIVE',
-        line_items: structure.line_items.map((item, index) => ({
+        line_items: structure.line_items.map((item) => ({
           item_name: item.item_name,
           amount: item.amount,
           display_order: item.display_order,

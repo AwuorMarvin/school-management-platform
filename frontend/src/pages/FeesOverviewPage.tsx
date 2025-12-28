@@ -48,7 +48,7 @@ const FeesOverviewPage = () => {
   const [expandedMatrixClasses, setExpandedMatrixClasses] = useState<Set<string>>(new Set())
   const [showCreateModeChoice, setShowCreateModeChoice] = useState(false)
   const [expandedCampuses, setExpandedCampuses] = useState<Set<string>>(new Set())
-  const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set())
+  const [_expandedClasses, _setExpandedClasses] = useState<Set<string>>(new Set())
 
   const isAdmin = user?.role === 'SCHOOL_ADMIN' || user?.role === 'CAMPUS_ADMIN' || user?.role === 'SUPER_ADMIN'
   const isSchoolAdmin = user?.role === 'SCHOOL_ADMIN' || user?.role === 'SUPER_ADMIN'
@@ -234,7 +234,14 @@ const FeesOverviewPage = () => {
             continue
           }
 
-          const classId = structure.class_id
+          if (!structure) {
+            continue
+          }
+
+          const classId = structure.class_id || structure.class_ids?.[0]
+          if (!classId) {
+            continue
+          }
           const classMeta = classMap.get(classId)
           if (!classMeta) {
             continue
@@ -931,19 +938,6 @@ const CampusClassBreakdown = ({ campusId, termId }: { campusId: string; termId: 
       }
       return newSet
     })
-  }
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-KE', {
-      style: 'currency',
-      currency: 'KES',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount)
-  }
-
-  const formatPercentage = (value: number) => {
-    return `${value.toFixed(1)}%`
   }
 
   if (loading) {

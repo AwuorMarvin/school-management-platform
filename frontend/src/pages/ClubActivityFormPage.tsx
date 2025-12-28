@@ -4,11 +4,11 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { clubActivitiesApi, ClubActivityCreate, ClubActivityUpdate, ClubActivity } from '../api/clubActivities'
+import { clubActivitiesApi, ClubActivityCreate, ClubActivityUpdate, ClubActivity as _ClubActivity } from '../api/clubActivities'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
 import { termsApi, Term } from '../api/terms'
 import { classesApi, Class } from '../api/classes'
-import { teachersApi, Teacher } from '../api/teachers'
+import { teachersApi as _teachersApi, Teacher } from '../api/teachers'
 import { useAuthStore } from '../store/authStore'
 
 const ClubActivityFormPage = () => {
@@ -23,7 +23,7 @@ const ClubActivityFormPage = () => {
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([])
   const [terms, setTerms] = useState<Term[]>([])
   const [classes, setClasses] = useState<Class[]>([])
-  const [teachers, setTeachers] = useState<Teacher[]>([])
+  const [_teachers, _setTeachers] = useState<Teacher[]>([])
   const [formData, setFormData] = useState({
     service_name: '',
     activity_type: 'CLUB' as 'CLUB' | 'EXTRA_CURRICULAR',

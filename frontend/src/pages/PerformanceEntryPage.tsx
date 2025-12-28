@@ -43,7 +43,7 @@ const PerformanceEntryPage = () => {
       
       // Load subjects from student's current class
       if (studentData.current_class?.id) {
-        const subjectsData = await subjectsApi.list(studentData.current_class.id)
+        const subjectsData = await subjectsApi.listForClass(studentData.current_class.id)
         setSubjects(subjectsData.data)
       }
     } catch (err: any) {

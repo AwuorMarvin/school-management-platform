@@ -381,10 +381,6 @@ const FeeStructureTermlyFormPage = () => {
     setError('')
 
     // Validation
-    if (!formData.structure_name.trim()) {
-      setError('Structure name is required')
-      return
-    }
     if (!formData.campus_id) {
       setError('Campus is required')
       return
@@ -422,7 +418,6 @@ const FeeStructureTermlyFormPage = () => {
     try {
       setLoading(true)
       const payload: FeeStructureTermlyCreate = {
-        structure_name: formData.structure_name,
         campus_id: formData.campus_id,
         academic_year_id: formData.academic_year_id,
         term_id: formData.term_id,
@@ -437,7 +432,7 @@ const FeeStructureTermlyFormPage = () => {
         })),
       }
 
-      const result = await feeStructuresApi.createTermly(payload)
+      await feeStructuresApi.createTermly(payload)
       
       // Success - result is a FeeStructure
       if (isEdit) {
@@ -720,7 +715,6 @@ const FeeStructureTermlyFormPage = () => {
                     try {
                       setLoading(true)
                       const payload: FeeStructureTermlyCreate = {
-                        structure_name: formData.structure_name,
                         campus_id: formData.campus_id,
                         academic_year_id: formData.academic_year_id,
                         term_id: formData.term_id,

@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { feeAdjustmentsApi, FeeAdjustmentCreate, FeeAdjustmentUpdate, FeeAdjustment } from '../api/feeAdjustments'
+import { feeAdjustmentsApi, FeeAdjustmentCreate, FeeAdjustmentUpdate, FeeAdjustment as _FeeAdjustment } from '../api/feeAdjustments'
 import { studentsApi, Student } from '../api/students'
 import { termsApi, Term } from '../api/terms'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
@@ -114,20 +114,20 @@ const FeeAdjustmentFormPage = () => {
     try {
       setLoading(true)
       const adjustment = await feeAdjustmentsApi.get(id!)
-      setFormData({
-        student_id: adjustment.student_id,
-        term_id: adjustment.term_id,
-        adjustment_type: adjustment.adjustment_type as 'FIXED_AMOUNT' | 'PERCENTAGE',
-        adjustment_value: adjustment.adjustment_value,
-        reason: adjustment.reason,
-      })
       // Load student
       const student = await studentsApi.get(adjustment.student_id)
       setSelectedStudent(student)
       // Load academic year from term
       const term = await termsApi.get(adjustment.term_id)
+      setFormData({
+        student_id: adjustment.student_id,
+        academic_year_id: term.academic_year_id || '',
+        term_id: adjustment.term_id,
+        adjustment_type: adjustment.adjustment_type as 'FIXED_AMOUNT' | 'PERCENTAGE',
+        adjustment_value: adjustment.adjustment_value,
+        reason: adjustment.reason,
+      })
       if (term.academic_year_id) {
-        setFormData(prev => ({ ...prev, academic_year_id: term.academic_year_id }))
         await loadTerms()
       }
     } catch (err: any) {

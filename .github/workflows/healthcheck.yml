@@ -1,0 +1,38 @@
+name: Healthcheck Pinger
+
+on:
+  schedule:
+    # Run every 5 minutes to keep Render free tier awake
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  ping-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Backend Health Endpoint
+        run: |
+          BACKEND_URL="${{ secrets.BACKEND_URL }}"
+          
+          if [ -z "$BACKEND_URL" ]; then
+            echo "Error: BACKEND_URL secret is not set"
+            exit 1
+          fi
+          
+          # Ensure URL ends with /health
+          HEALTH_URL="${BACKEND_URL%/}/health"
+          
+          echo "Pinging: $HEALTH_URL"
+          
+          # Use curl to ping the health endpoint
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$HEALTH_URL" || echo "000")
+          
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "503" ]; then
+            echo "✅ Health check successful (HTTP $HTTP_CODE)"
+            echo "Note: 503 is acceptable if database is temporarily unavailable"
+          else
+            echo "⚠️ Health check returned HTTP $HTTP_CODE"
+            # Don't fail the workflow - just log the issue
+            # Render free tier may be spinning up
+          fi
+

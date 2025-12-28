@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { teachersApi, TeacherCreate, TeacherUpdate, Teacher } from '../api/teachers'
+import { teachersApi, TeacherCreate, TeacherUpdate, Teacher as _Teacher } from '../api/teachers'
 import { campusesApi, Campus } from '../api/campuses'
 import { useAuthStore } from '../store/authStore'
 

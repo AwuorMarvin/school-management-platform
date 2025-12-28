@@ -255,7 +255,7 @@ const ClassFormPage = () => {
                           value={formData.campus_id}
                           onChange={handleChange}
                           required
-                          disabled={loadingData || (user?.role === 'CAMPUS_ADMIN' && user.campus_id)}
+                          disabled={loadingData || !!(user?.role === 'CAMPUS_ADMIN' && user.campus_id)}
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors disabled:bg-gray-100"
                         >
                           <option value="">Select Campus</option>

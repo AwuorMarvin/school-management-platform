@@ -13,6 +13,7 @@ interface ToastState {
   toasts: Toast[]
   addToast: (message: string, type?: ToastType, duration?: number) => void
   removeToast: (id: string) => void
+  showToast: (message: string, type?: ToastType, duration?: number) => void
   success: (message: string, duration?: number) => void
   error: (message: string, duration?: number) => void
   info: (message: string, duration?: number) => void
@@ -44,6 +45,10 @@ export const useToastStore = create<ToastState>((set) => ({
     set((state) => ({
       toasts: state.toasts.filter((t) => t.id !== id),
     }))
+  },
+  
+  showToast: (message: string, type: ToastType = 'info', duration?: number) => {
+    useToastStore.getState().addToast(message, type, duration)
   },
   
   success: (message: string, duration?: number) => {

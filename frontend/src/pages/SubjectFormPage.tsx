@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { subjectsApi, SubjectCreate, SubjectUpdate, Subject } from '../api/subjects'
+import { subjectsApi, SubjectCreate, SubjectUpdate, Subject as _Subject } from '../api/subjects'
 import { classesApi, Class } from '../api/classes'
 import { useAuthStore } from '../store/authStore'
 

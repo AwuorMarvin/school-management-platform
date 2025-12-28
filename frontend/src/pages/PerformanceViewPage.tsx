@@ -70,7 +70,6 @@ const PerformanceViewPage = () => {
 
   const isTeacher = user?.role === 'TEACHER'
   const isAdmin = user?.role === 'SCHOOL_ADMIN' || user?.role === 'CAMPUS_ADMIN' || user?.role === 'SUPER_ADMIN'
-  const isParent = user?.role === 'PARENT'
   const canEnter = isTeacher || isAdmin
 
   if (loading && !student) {

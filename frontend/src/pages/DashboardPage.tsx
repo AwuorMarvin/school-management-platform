@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link as _Link } from 'react-router-dom'
 import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import ContentCard from '../components/ContentCard'
-import StatusBadge from '../components/StatusBadge'
+// import StatusBadge from '../components/StatusBadge' // Unused
 import { useAuthStore } from '../store/authStore'
 import { studentsApi, Student } from '../api/students'
 import { teachersApi } from '../api/teachers'
 import { feeSummaryApi } from '../api/feeSummary'
 import ParentDashboard from './dashboards/ParentDashboard'
 import TeacherDashboard from './dashboards/TeacherDashboard'
-import { Users, UserCircle2, Users2, DollarSign, Eye, MoreVertical } from 'lucide-react'
+import { Users, UserCircle2, Users2, DollarSign, Eye as _Eye, MoreVertical as _MoreVertical } from 'lucide-react'
 import FeePerformancePerClassChart from '../components/FeePerformancePerClassChart'
 import FeePerformancePerTermChart from '../components/FeePerformancePerTermChart'
 
@@ -34,8 +34,8 @@ const DashboardPage = () => {
     activeParents: 0,
     studentTeacherRatio: '0:0',
   })
-  const [loading, setLoading] = useState(true)
-  const [recentStudents, setRecentStudents] = useState<Student[]>([])
+  const [_loading, setLoading] = useState(true)
+  const [_recentStudents, setRecentStudents] = useState<Student[]>([])
   const [feeStats, setFeeStats] = useState({
     expected: 0,
     paid: 0,
@@ -121,11 +121,6 @@ const DashboardPage = () => {
       style: 'currency',
       currency: 'KES',
     }).format(amount)
-  }
-
-  const getCurrentMonthYear = () => {
-    const now = new Date()
-    return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   }
 
   const getPaymentRateTextColor = (rate: number) => {

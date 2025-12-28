@@ -4,7 +4,7 @@ import AppLayout from '../components/AppLayout'
 import PageHeader from '../components/PageHeader'
 import ContentCard from '../components/ContentCard'
 import BackButton from '../components/BackButton'
-import { globalDiscountsApi, GlobalDiscountCreate, GlobalDiscountUpdate, GlobalDiscount } from '../api/globalDiscounts'
+import { globalDiscountsApi, GlobalDiscountCreate, GlobalDiscountUpdate, GlobalDiscount as _GlobalDiscount } from '../api/globalDiscounts'
 import { termsApi, Term } from '../api/terms'
 import { academicYearsApi, AcademicYear } from '../api/academicYears'
 import { campusesApi, Campus } from '../api/campuses'
@@ -53,7 +53,7 @@ const GlobalDiscountFormPage = () => {
     } else {
       // Pre-select campus for Campus Admin
       if (isCampusAdmin && user?.campus_id) {
-        setFormData(prev => ({ ...prev, campus_ids: [user.campus_id] }))
+        setFormData(prev => ({ ...prev, campus_ids: [user.campus_id!] }))
       }
     }
   }, [id, isEdit, isAdmin, isCampusAdmin, user?.campus_id, navigate])
@@ -121,10 +121,13 @@ const GlobalDiscountFormPage = () => {
     try {
       setLoading(true)
       const discount = await globalDiscountsApi.get(id!)
+      // Load academic year from term
+      const term = await termsApi.get(discount.term_id)
       setFormData({
         discount_name: discount.discount_name,
         discount_type: discount.discount_type as 'FIXED_AMOUNT' | 'PERCENTAGE',
         discount_value: discount.discount_value,
+        academic_year_id: term.academic_year_id || '',
         term_id: discount.term_id,
         applies_to: discount.applies_to as 'ALL_STUDENTS' | 'SELECTED_CAMPUSES' | 'SELECTED_CLASSES',
         campus_ids: discount.campus_discounts?.map(cd => cd.campus_id) || [],
@@ -133,10 +136,7 @@ const GlobalDiscountFormPage = () => {
         condition_value: discount.condition_value || '',
         is_active: discount.is_active,
       })
-      // Load academic year from term
-      const term = await termsApi.get(discount.term_id)
       if (term.academic_year_id) {
-        setFormData(prev => ({ ...prev, academic_year_id: term.academic_year_id }))
         await loadTerms()
         await loadClasses()
       }
@@ -255,15 +255,6 @@ const GlobalDiscountFormPage = () => {
     } finally {
       setLoading(false)
     }
-  }
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-KE', {
-      style: 'currency',
-      currency: 'KES',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount)
   }
 
   if (!isAdmin) {

@@ -144,7 +144,7 @@ const SubjectsPage = () => {
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {subject.classes && subject.classes.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {subject.classes.map((cls, idx) => (
+                            {subject.classes.map((cls) => (
                               <span key={cls.id} className="px-2 py-1 bg-primary-50 text-primary-700 rounded text-xs">
                                 {cls.name}
                               </span>

@@ -30,7 +30,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({
   const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [referenceNumber, setReferenceNumber] = useState('')
   const [loading, setLoading] = useState(false)
-  const successToast = useToastStore((state) => state.success)
   const errorToast = useToastStore((state) => state.error)
 
   useEffect(() => {

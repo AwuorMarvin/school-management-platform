@@ -16,7 +16,7 @@ import {
   Bus,
   Megaphone,
   FileText,
-  Settings,
+  Settings as _Settings,
   MoreVertical
 } from 'lucide-react'
 

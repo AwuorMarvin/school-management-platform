@@ -74,14 +74,22 @@ const TermFormPage = () => {
     try {
       setLoading(true)
       const term = await termsApi.get(id!)
-      setFormData({
-        name: term.name,
-        start_date: term.start_date,
-        end_date: term.end_date,
-      })
       if (term.academic_year_id) {
         const year = await academicYearsApi.get(term.academic_year_id)
         setAcademicYear(year)
+        setFormData({
+          academic_year_id: term.academic_year_id,
+          name: term.name,
+          start_date: term.start_date,
+          end_date: term.end_date,
+        })
+      } else {
+        setFormData({
+          academic_year_id: '',
+          name: term.name,
+          start_date: term.start_date,
+          end_date: term.end_date,
+        })
       }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load term')

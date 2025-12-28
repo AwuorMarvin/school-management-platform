@@ -14,14 +14,14 @@ import { useToastStore } from '../store/toastStore'
 import { 
   Plus, 
   Calendar, 
-  X, 
-  Eye, 
+  X as _X, 
+  Eye as _Eye, 
   Edit, 
   ChevronDown, 
   ChevronRight,
   Building2,
   Users,
-  DollarSign,
+  DollarSign as _DollarSign,
   FileText,
   AlertCircle
 } from 'lucide-react'
@@ -48,7 +48,7 @@ const FeeStructuresPage = () => {
   const [terms, setTerms] = useState<Term[]>([])
   const [campuses, setCampuses] = useState<Campus[]>([])
   const [classes, setClasses] = useState<Class[]>([])
-  const [currentTerm, setCurrentTerm] = useState<Term | null>(null)
+  const [_currentTerm, setCurrentTerm] = useState<Term | null>(null)
   
   // Academic year overview
   const [overviewData, setOverviewData] = useState<AcademicYearFeeOverviewResponse | null>(null)

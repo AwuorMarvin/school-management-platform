@@ -217,8 +217,17 @@ class Settings(BaseSettings):
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173"
         ],
-        description="Allowed CORS origins"
+        description="Allowed CORS origins (comma-separated string or list)"
     )
+    
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v) -> list[str]:
+        """Parse CORS origins from environment variable (comma-separated) or list."""
+        if isinstance(v, str):
+            # Split comma-separated string and strip whitespace
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v if isinstance(v, list) else []
     CORS_ALLOW_CREDENTIALS: bool = Field(default=True, description="Allow credentials in CORS")
     CORS_ALLOW_METHODS: list[str] = Field(default=["*"], description="Allowed HTTP methods")
     CORS_ALLOW_HEADERS: list[str] = Field(default=["*"], description="Allowed headers")
@@ -275,14 +284,22 @@ class Settings(BaseSettings):
         if self.is_production and len(self.JWT_SECRET_KEY) < 64:
             raise ValueError("JWT_SECRET_KEY must be at least 64 characters in production")
         
-        # Ensure required services are configured in production
+        # Validate optional services only if they are enabled in production
         if self.is_production:
-            if not self.AWS_ACCESS_KEY_ID or not self.AWS_SECRET_ACCESS_KEY:
-                raise ValueError("AWS credentials must be set in production")
-            if not self.SENDGRID_API_KEY:
-                raise ValueError("SendGrid API key must be set in production")
-            if not self.AFRICAS_TALKING_API_KEY:
-                raise ValueError("Africa's Talking API key must be set in production")
+            # AWS S3 - only required if file storage is being used
+            # Since there's no explicit flag, we check if credentials are provided
+            # If AWS credentials are partially set, require both
+            if (self.AWS_ACCESS_KEY_ID or self.AWS_SECRET_ACCESS_KEY) and \
+               (not self.AWS_ACCESS_KEY_ID or not self.AWS_SECRET_ACCESS_KEY):
+                raise ValueError("Both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set if using AWS S3")
+            
+            # Email - only required if enabled
+            if self.EMAIL_ENABLED and not self.SENDGRID_API_KEY:
+                raise ValueError("SENDGRID_API_KEY must be set when EMAIL_ENABLED=true")
+            
+            # SMS - only required if enabled
+            if self.SMS_ENABLED and not self.AFRICAS_TALKING_API_KEY:
+                raise ValueError("AFRICAS_TALKING_API_KEY must be set when SMS_ENABLED=true")
 
 
 # ============================================================================

@@ -58,14 +58,14 @@ const TeacherDashboard = () => {
             value={myChildren.length}
             subtitle="Students in my classes"
             icon={<span className="text-2xl">👥</span>}
-            valueColor="primary"
+            borderColor="blue"
           />
           <StatCard
             title="Pending Fees"
             value={formatCurrency(pendingFees)}
             subtitle="Unpaid fees"
             icon={<span className="text-2xl">💰</span>}
-            valueColor="error"
+            borderColor="red"
             link="/fee-status"
             linkText="View Details"
           />
