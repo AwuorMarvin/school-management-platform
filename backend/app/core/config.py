@@ -3,8 +3,9 @@ Application configuration using Pydantic Settings.
 All settings are loaded from environment variables and validated.
 """
 
-from typing import Optional
-from pydantic import Field, PostgresDsn, field_validator
+import json
+from typing import Optional, Any
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -220,14 +221,42 @@ class Settings(BaseSettings):
         description="Allowed CORS origins (comma-separated string or list)"
     )
     
-    @field_validator("CORS_ORIGINS", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def parse_cors_origins(cls, v) -> list[str]:
-        """Parse CORS origins from environment variable (comma-separated) or list."""
-        if isinstance(v, str):
-            # Split comma-separated string and strip whitespace
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v if isinstance(v, list) else []
+    def parse_cors_origins(cls, data: Any) -> Any:
+        """Parse CORS_ORIGINS from environment variable before Pydantic tries to parse it as JSON."""
+        if isinstance(data, dict):
+            # Handle case-insensitive key lookup (Pydantic Settings may use different cases)
+            cors_key = None
+            for key in data.keys():
+                if key.upper() == "CORS_ORIGINS":
+                    cors_key = key
+                    break
+            
+            if cors_key and cors_key in data:
+                cors_value = data[cors_key]
+                # If it's a string, handle it before Pydantic tries to parse as JSON
+                if isinstance(cors_value, str):
+                    cors_stripped = cors_value.strip()
+                    if cors_stripped == "":
+                        # Empty string - remove it to use default
+                        del data[cors_key]
+                    elif cors_stripped.startswith("["):
+                        # Looks like JSON, try to parse it
+                        try:
+                            parsed = json.loads(cors_stripped)
+                            if isinstance(parsed, list):
+                                data[cors_key] = [str(origin).strip() for origin in parsed if origin]
+                            else:
+                                # Invalid JSON format, treat as comma-separated
+                                data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            # JSON parse failed, treat as comma-separated string
+                            data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
+                    else:
+                        # Regular comma-separated string
+                        data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
+        return data
     CORS_ALLOW_CREDENTIALS: bool = Field(default=True, description="Allow credentials in CORS")
     CORS_ALLOW_METHODS: list[str] = Field(default=["*"], description="Allowed HTTP methods")
     CORS_ALLOW_HEADERS: list[str] = Field(default=["*"], description="Allowed headers")
