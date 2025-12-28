@@ -211,52 +211,33 @@ class Settings(BaseSettings):
     # ============================================================================
     # CORS Settings
     # ============================================================================
-    CORS_ORIGINS: list[str] = Field(
-        default=[
+    _cors_origins_str: Optional[str] = Field(
+        default=None,
+        alias="CORS_ORIGINS",
+        description="Allowed CORS origins (comma-separated string)"
+    )
+    
+    @model_validator(mode="after")
+    def parse_cors_origins(self) -> "Settings":
+        """Convert CORS_ORIGINS string to list after initialization."""
+        default_origins = [
             "http://localhost:3000",
             "http://localhost:5173",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173"
-        ],
-        description="Allowed CORS origins (comma-separated string or list)"
-    )
+        ]
+        
+        if self._cors_origins_str is None or self._cors_origins_str.strip() == "":
+            # Use default
+            object.__setattr__(self, "CORS_ORIGINS", default_origins)
+        else:
+            # Split comma-separated string and strip whitespace
+            origins = [origin.strip() for origin in self._cors_origins_str.split(",") if origin.strip()]
+            object.__setattr__(self, "CORS_ORIGINS", origins if origins else default_origins)
+        return self
     
-    @model_validator(mode="before")
-    @classmethod
-    def parse_cors_origins(cls, data: Any) -> Any:
-        """Parse CORS_ORIGINS from environment variable before Pydantic tries to parse it as JSON."""
-        if isinstance(data, dict):
-            # Handle case-insensitive key lookup (Pydantic Settings may use different cases)
-            cors_key = None
-            for key in data.keys():
-                if key.upper() == "CORS_ORIGINS":
-                    cors_key = key
-                    break
-            
-            if cors_key and cors_key in data:
-                cors_value = data[cors_key]
-                # If it's a string, handle it before Pydantic tries to parse as JSON
-                if isinstance(cors_value, str):
-                    cors_stripped = cors_value.strip()
-                    if cors_stripped == "":
-                        # Empty string - remove it to use default
-                        del data[cors_key]
-                    elif cors_stripped.startswith("["):
-                        # Looks like JSON, try to parse it
-                        try:
-                            parsed = json.loads(cors_stripped)
-                            if isinstance(parsed, list):
-                                data[cors_key] = [str(origin).strip() for origin in parsed if origin]
-                            else:
-                                # Invalid JSON format, treat as comma-separated
-                                data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            # JSON parse failed, treat as comma-separated string
-                            data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
-                    else:
-                        # Regular comma-separated string
-                        data[cors_key] = [origin.strip() for origin in cors_stripped.split(",") if origin.strip()]
-        return data
+    # CORS_ORIGINS is set by parse_cors_origins validator, not defined as a Field
+    # to avoid Pydantic trying to parse it as JSON from environment variable
     CORS_ALLOW_CREDENTIALS: bool = Field(default=True, description="Allow credentials in CORS")
     CORS_ALLOW_METHODS: list[str] = Field(default=["*"], description="Allowed HTTP methods")
     CORS_ALLOW_HEADERS: list[str] = Field(default=["*"], description="Allowed headers")
