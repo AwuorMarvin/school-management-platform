@@ -211,7 +211,7 @@ class Settings(BaseSettings):
     # ============================================================================
     # CORS Settings
     # ============================================================================
-    _cors_origins_str: Optional[str] = Field(
+    cors_origins_str: Optional[str] = Field(
         default=None,
         alias="CORS_ORIGINS",
         description="Allowed CORS origins (comma-separated string)"
@@ -227,12 +227,12 @@ class Settings(BaseSettings):
             "http://127.0.0.1:5173"
         ]
         
-        if self._cors_origins_str is None or self._cors_origins_str.strip() == "":
+        if self.cors_origins_str is None or self.cors_origins_str.strip() == "":
             # Use default
             object.__setattr__(self, "CORS_ORIGINS", default_origins)
         else:
             # Split comma-separated string and strip whitespace
-            origins = [origin.strip() for origin in self._cors_origins_str.split(",") if origin.strip()]
+            origins = [origin.strip() for origin in self.cors_origins_str.split(",") if origin.strip()]
             object.__setattr__(self, "CORS_ORIGINS", origins if origins else default_origins)
         return self
     
