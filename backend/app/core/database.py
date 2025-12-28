@@ -33,6 +33,8 @@ def get_engine_kwargs() -> dict:
     engine_kwargs = {
         "echo": settings.DATABASE_ECHO,
         "future": True,
+        # Disable statement cache for pgbouncer compatibility (Supabase uses pgbouncer)
+        "connect_args": {"statement_cache_size": 0}
     }
     
     # Use NullPool for testing (new connection each time)

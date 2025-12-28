@@ -70,7 +70,12 @@ SAMPLE_USERS = [
 
 async def create_sample_data():
     """Create sample school, campus, and users."""
-    engine = create_async_engine(str(settings.DATABASE_URL), echo=False)
+    # Disable statement cache for pgbouncer compatibility
+    engine = create_async_engine(
+        str(settings.DATABASE_URL),
+        echo=False,
+        connect_args={"statement_cache_size": 0}
+    )
     async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:
