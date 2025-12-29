@@ -127,42 +127,6 @@ const StudentsPage = () => {
     return classAssignments[classId]?.subjects || []
   }
 
-  const getPaginationRange = () => {
-    // If client-side filters are active, use filtered results count
-    const hasClientFilters = !!(classFilter || teacherFilter || subjectFilter || search)
-    
-    if (hasClientFilters) {
-      const total = filteredStudents.length
-      if (total === 0) {
-        return { from: 0, to: 0, total: 0 }
-      }
-      return { from: 1, to: total, total }
-    }
-
-    // Otherwise, use API pagination
-    const page = pagination?.page ?? 1
-    const pageSize = pagination?.page_size ?? 0
-    const total = pagination?.total ?? 0
-
-    if (total === 0 || pageSize === 0) {
-      return { from: 0, to: 0, total: 0 }
-    }
-
-    const from = (page - 1) * pageSize + 1
-    const to = Math.min(page * pageSize, total)
-
-    return { from, to, total }
-  }
-  
-  const shouldShowPagination = () => {
-    // If client-side filters are active, don't show pagination (all results are shown)
-    const hasClientFilters = !!(classFilter || teacherFilter || subjectFilter || search)
-    if (hasClientFilters) {
-      return false
-    }
-    // Otherwise, show pagination if there are multiple pages from API
-    return pagination.total_pages > 1
-  }
 
   const filteredStudents = students.filter((student) => {
     const fullName = `${student.first_name} ${student.middle_name || ''} ${student.last_name}`
@@ -191,7 +155,6 @@ const StudentsPage = () => {
     return true
   })
 
-  const paginationRange = getPaginationRange()
 
   // Derived teacher and subject options based on current class filter
   const teacherOptions = (() => {
@@ -506,36 +469,30 @@ const StudentsPage = () => {
                 </table>
               </div>
 
-              {/* Pagination */}
-              {shouldShowPagination() && (
+              {/* Pagination (based on visible results on this page) */}
+              {filteredStudents.length > 0 && (
                 <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between mt-4">
                   <div className="text-sm text-gray-700">
-                    Showing {paginationRange.from} to {paginationRange.to} of {paginationRange.total} results
+                    Showing 1 to {filteredStudents.length} of {filteredStudents.length} results
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
-                      disabled={!pagination.has_previous}
-                      className="px-4 py-2.5 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
-                      disabled={!pagination.has_next}
-                      className="px-4 py-2.5 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
-              {/* Show count when client-side filters are active */}
-              {!shouldShowPagination() && filteredStudents.length > 0 && (
-                <div className="px-6 py-4 border-t border-gray-200 mt-4">
-                  <div className="text-sm text-gray-700">
-                    Showing {filteredStudents.length} result{filteredStudents.length !== 1 ? 's' : ''}
-                  </div>
+                  {pagination.total_pages > 1 && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
+                        disabled={!pagination.has_previous}
+                        className="px-4 py-2.5 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
+                        disabled={!pagination.has_next || filteredStudents.length < pagination.page_size}
+                        className="px-4 py-2.5 border border-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>
