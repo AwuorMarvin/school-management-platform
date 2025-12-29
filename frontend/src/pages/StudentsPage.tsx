@@ -128,6 +128,18 @@ const StudentsPage = () => {
   }
 
   const getPaginationRange = () => {
+    // If client-side filters are active, use filtered results count
+    const hasClientFilters = !!(classFilter || teacherFilter || subjectFilter || search)
+    
+    if (hasClientFilters) {
+      const total = filteredStudents.length
+      if (total === 0) {
+        return { from: 0, to: 0, total: 0 }
+      }
+      return { from: 1, to: total, total }
+    }
+
+    // Otherwise, use API pagination
     const page = pagination?.page ?? 1
     const pageSize = pagination?.page_size ?? 0
     const total = pagination?.total ?? 0
@@ -140,6 +152,16 @@ const StudentsPage = () => {
     const to = Math.min(page * pageSize, total)
 
     return { from, to, total }
+  }
+  
+  const shouldShowPagination = () => {
+    // If client-side filters are active, don't show pagination (all results are shown)
+    const hasClientFilters = !!(classFilter || teacherFilter || subjectFilter || search)
+    if (hasClientFilters) {
+      return false
+    }
+    // Otherwise, show pagination if there are multiple pages from API
+    return pagination.total_pages > 1
   }
 
   const filteredStudents = students.filter((student) => {
@@ -485,7 +507,7 @@ const StudentsPage = () => {
               </div>
 
               {/* Pagination */}
-              {pagination.total_pages > 1 && (
+              {shouldShowPagination() && (
                 <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between mt-4">
                   <div className="text-sm text-gray-700">
                     Showing {paginationRange.from} to {paginationRange.to} of {paginationRange.total} results
@@ -505,6 +527,14 @@ const StudentsPage = () => {
                     >
                       Next
                     </button>
+                  </div>
+                </div>
+              )}
+              {/* Show count when client-side filters are active */}
+              {!shouldShowPagination() && filteredStudents.length > 0 && (
+                <div className="px-6 py-4 border-t border-gray-200 mt-4">
+                  <div className="text-sm text-gray-700">
+                    Showing {filteredStudents.length} result{filteredStudents.length !== 1 ? 's' : ''}
                   </div>
                 </div>
               )}
