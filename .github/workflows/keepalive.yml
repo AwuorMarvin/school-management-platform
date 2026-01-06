@@ -1,0 +1,39 @@
+name: Keep Upstash Redis Active
+
+on:
+  schedule:
+    # Runs every 5 days at midnight UTC
+    - cron: '0 0 */5 * *'
+  # Allows manual trigger from Actions tab
+  workflow_dispatch:
+
+jobs:
+  ping-redis:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Ping Redis Database
+        run: |
+          response=$(curl -w "\n%{http_code}" -X POST ${{ secrets.UPSTASH_REDIS_REST_URL }} \
+            -H "Authorization: Bearer ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}" \
+            -d '["PING"]')
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+          
+          if [ "$http_code" -ne 200 ]; then
+            echo "Failed to ping Redis"
+            exit 1
+          fi
+          
+      - name: Set keepalive timestamp
+        run: |
+          timestamp=$(date +%s)
+          curl -X POST ${{ secrets.UPSTASH_REDIS_REST_URL }} \
+            -H "Authorization: Bearer ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}" \
+            -d "[\"SET\", \"keepalive\", \"$timestamp\"]"
+          
+          echo "Keepalive timestamp set to: $timestamp"
